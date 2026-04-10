@@ -1,10 +1,7 @@
 import torch
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Optional
 from swift.template.templates.qwen import Qwen3_5Template
 from swift.template.templates.gemma import Gemma4Template
-import inspect
-import torch
-from typing import Any, Dict
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):
 
@@ -66,26 +63,6 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
             inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
         return {'inputs_embeds': inputs_embeds}
-    
-
-    def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
-        """Handle position_ids and Flash Attention params"""
-        res = super()._data_collator(batch, padding_to=padding_to)
-
-        if not self.padding_free and self.is_training:
-            res['position_ids'] = self._get_position_ids(res)
-
-        if 'position_ids' in res:
-            position_ids = res['position_ids']
-
-            res['position_ids'] = position_ids[1:]
-            res['text_position_ids'] = text_position_ids = position_ids[0][:1]
-
-            from swift.utils import get_packed_seq_params
-            packed_params = get_packed_seq_params(text_position_ids)
-
-            res.update(packed_params)
-        return res
 
 
 # ──────────────────────────────────────────────
