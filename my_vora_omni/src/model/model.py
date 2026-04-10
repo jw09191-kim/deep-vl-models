@@ -121,7 +121,12 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         config.vision_config.spatial_merge_size = 2
         super().__init__(config)
         self.model = Qwen3_5VJEPAInnerModel(config)
-    
+
+    def _validate_model_kwargs(self, model_kwargs):
+        model_kwargs.pop("num_soft_tokens_per_image", None)
+        model_kwargs.pop("num_soft_tokens_per_video", None)
+        super()._validate_model_kwargs(model_kwargs)
+
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         kwargs.setdefault("ignore_mismatched_sizes", True)
@@ -243,6 +248,11 @@ class Qwen3_5VJEPA21GModel(Qwen3_5VJEPA21Model):
 
 class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
     VISION_MODEL_ID = None
+
+    def _validate_model_kwargs(self, model_kwargs):
+        model_kwargs.pop("num_soft_tokens_per_image", None)
+        model_kwargs.pop("num_soft_tokens_per_video", None)
+        super()._validate_model_kwargs(model_kwargs)
 
     def get_image_features(self, pixel_values, image_grid_thw, image_position_ids=None, **kwargs):
         merge_size = self.config.vision_config.spatial_merge_size
