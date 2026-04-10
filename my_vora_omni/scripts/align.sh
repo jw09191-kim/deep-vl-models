@@ -53,8 +53,11 @@ swift sft \
     --model "$MODEL_ID" \
     --model_type "$MODEL_TYPE" \
     --external_plugins 'my_vora_omni' \
-    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
-              './datasets/LLaVA-Video-178K/llava_video_clean.jsonl#150000' \
+    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#200000' \
+              './datasets/LLaVA-Video-178K/sources/activitynet.jsonl' \
+              './datasets/LLaVA-Video-178K/sources/hdvila.jsonl' \
+              './datasets/LLaVA-Video-178K/sources/ego4d.jsonl#30000' \
+              './datasets/LLaVA-Video-178K/sources/Charades.jsonl' \
     --tuner_type full \
     --torch_dtype bfloat16 \
     --attn_impl "flash_attn" \
