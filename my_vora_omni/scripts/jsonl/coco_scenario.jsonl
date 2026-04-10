@@ -1,0 +1,128 @@
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_0e0ad98d.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_0fa694c0.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_2aac1f38.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_10e457e6.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_408f3390.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_1651a8ad.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_09340ee4.mp4"
+  ]
+}
+
+{
+  "messages": [
+    {
+      "role": "system",
+      "content": " You are a Canine Behavior Expert. Analyze the video strictly based on visual evidence. Focus on body language, environmental triggers, and micro-expressions. Be concise."
+    },
+    {
+      "role": "user",
+      "content": "<video>\nAnalyze the dog in the video:\n1. **Action:** Specific physical movement.\n2. **Body Language:** Ears, tail, gaze, and posture.\n3. **Context:** Environmental objects or actors interacting with the dog.\n4. **Inference:** Emotional state and the visual cause for this state."
+    }
+  ],
+  "videos": [
+    "/home/jw09191/tmp/video/coco_scenario/gemini_generated_video_ed6b61ed.mp4"
+  ]
+}
+

@@ -1,0 +1,83 @@
+import torch
+from typing import Any, Dict, List, Literal, Optional
+from swift.template.templates.qwen import Qwen3_5Template
+import inspect
+import torch
+from typing import Any, Dict
+
+class Qwen3_5VJEPATemplate(Qwen3_5Template):
+
+    def _post_encode(self, model, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.is_training:
+            return inputs
+
+        input_ids = inputs['input_ids']
+        base_model = self.get_base_model(model)
+        inputs_embeds = base_model.model.language_model.embed_tokens(input_ids)
+
+        pixel_values        = inputs.get('pixel_values')
+        pixel_values_videos = inputs.get('pixel_values_videos')
+        image_grid_thw      = inputs.get('image_grid_thw')
+        video_grid_thw      = inputs.get('video_grid_thw')
+
+        if pixel_values is not None:
+            B = pixel_values.shape[0]
+            image_embeds_list = []
+            
+            for b in range(B):
+                pv = pixel_values[b:b+1]
+                ig = image_grid_thw[b:b+1]
+                output = base_model.model.get_image_features(pv, ig)
+                
+                embeds = output.pooler_output[0]
+                image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+            
+            image_embeds = torch.cat(image_embeds_list, dim=0)
+            image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+            image_mask, _ = base_model.model.get_placeholder_mask(
+                input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+            )
+            inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+        if pixel_values_videos is not None:
+            B = pixel_values_videos.shape[0]
+            video_embeds_list = []
+            
+            for b in range(B):
+                pv = pixel_values_videos[b:b+1]
+                vg = video_grid_thw[b:b+1]
+                output = base_model.model.get_video_features(pv, vg)
+
+                embeds = output.pooler_output[0]
+                video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+            
+            video_embeds = torch.cat(video_embeds_list, dim=0)
+            video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+            _, video_mask = base_model.model.get_placeholder_mask(
+                input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+            )
+            inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+
+        return {'inputs_embeds': inputs_embeds}
+    
+
+    def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
+        """Handle position_ids and Flash Attention params"""
+        res = super()._data_collator(batch, padding_to=padding_to)
+        
+        if not self.padding_free and self.is_training:
+            res['position_ids'] = self._get_position_ids(res)
+            
+        if 'position_ids' in res:
+            position_ids = res['position_ids']
+
+            res['position_ids'] = position_ids[1:]
+            res['text_position_ids'] = text_position_ids = position_ids[0][:1]
+            
+            from swift.utils import get_packed_seq_params
+            packed_params = get_packed_seq_params(text_position_ids)
+
+            res.update(packed_params)
+        return res
+
+    
