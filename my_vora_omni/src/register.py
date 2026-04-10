@@ -8,8 +8,8 @@ from swift.model import (
     register_model_arch
 )
 from swift.model.models.qwen import Qwen3_5Loader
-from swift.template import register_template, TemplateMeta
-from swift.template.templates.qwen import QwenTemplateMeta, MLLMTemplateType
+from swift.template import register_template
+from swift.template.templates.qwen import QwenTemplateMeta
 
 from transformers import AutoImageProcessor, AutoVideoProcessor
 from my_vora_omni.src.processor.processor import (
@@ -34,12 +34,13 @@ from my_vora_omni.src.template.template import Qwen3_5VJEPATemplate
 
 AutoImageProcessor.register(
     "VJEPAImageProcessor",
+    image_processor_class=VJEPAImageProcessor,
     fast_image_processor_class=VJEPAImageProcessor,
     exist_ok=True,
 )
 AutoVideoProcessor.register(
     "VJEPAVideoProcessor",
-    VJEPAVideoProcessor,
+    video_processor_class=VJEPAVideoProcessor,
     exist_ok=True,
 )
 

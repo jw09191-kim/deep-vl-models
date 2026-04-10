@@ -53,16 +53,17 @@ swift sft \
     --model "$MODEL_ID" \
     --model_type "$MODEL_TYPE" \
     --external_plugins 'my_vora_omni' \
-    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#200000' \
-              './datasets/LLaVA-Video-178K/llava_video_clean.jsonl#100000' \
+    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
+              './datasets/LLaVA-Video-178K/llava_video_clean.jsonl#150000' \
     --tuner_type full \
     --torch_dtype bfloat16 \
     --attn_impl "flash_attn" \
     --padding_free false \
-    --num_train_epochs 1 \
+    --num_train_epochs 2 \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
-    --learning_rate 1e-4 \
+    --learning_rate 5e-5 \
+    --lr_scheduler_type cosine \
     --freeze_vit true \
     --freeze_llm true \
     --freeze_aligner false \
