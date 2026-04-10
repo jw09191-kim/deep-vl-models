@@ -21,7 +21,6 @@ class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
 
         results     = []
         item_offset = 0   # image_embeds 첫 번째 차원 인덱스
-        vid_offset  = 0   # 비디오 multi-clip용 내부 오프셋
 
         for grid_idx in range(image_grid_thw.shape[0]):
             t, h, w = image_grid_thw[grid_idx].tolist()
@@ -44,13 +43,21 @@ class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
 
                 item_offset += n_tiles
 
-            else:   # 비디오 — 기존 multi-clip 로직 유지
-                n      = t * h * w
-                embeds = image_embeds[item_offset, vid_offset:vid_offset + n]
-                vid_offset += n
-                if vid_offset >= image_embeds.shape[1]:
+            else:   # 비디오 — dynamic spatial tiling 지원
+                n_tiles = (h * w) // ppt
+
+                if n_tiles == 1:
+                    # 단일 타일: [t*pps², D] → [t*h*w, D]
+                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
                     item_offset += 1
-                    vid_offset   = 0
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]  # [n_tiles, t*pps², D]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
+                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()   # [t, n_rows, pps, n_cols, pps, D]
+                    embeds = tiles.reshape(t * h * w, -1)
+                    item_offset += n_tiles
 
             # 공간 merge (이미지/비디오 공통)
             embeds = embeds.view(t, h // merge_size, merge_size,
@@ -65,7 +72,7 @@ class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
         return BaseModelOutputWithPooling(pooler_output=tuple(results))
 
     def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
-        return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)  
+        return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)
 
 class VJEPA2VisualModule(nn.Module):
     def __init__(self, vjepa2_model, vjepa_dim, merge_size, llm_dim,
@@ -263,7 +270,6 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
 
         results     = []
         item_offset = 0
-        vid_offset  = 0
 
         for grid_idx in range(image_grid_thw.shape[0]):
             t, h, w = image_grid_thw[grid_idx].tolist()
@@ -284,13 +290,20 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
 
                 item_offset += n_tiles
 
-            else:
-                n      = t * h * w
-                embeds = image_embeds[item_offset, vid_offset:vid_offset + n]
-                vid_offset += n
-                if vid_offset >= image_embeds.shape[1]:
+            else:   # 비디오 — dynamic spatial tiling 지원
+                n_tiles = (h * w) // ppt
+
+                if n_tiles == 1:
+                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
                     item_offset += 1
-                    vid_offset   = 0
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]  # [n_tiles, t*pps², D]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
+                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()   # [t, n_rows, pps, n_cols, pps, D]
+                    embeds = tiles.reshape(t * h * w, -1)
+                    item_offset += n_tiles
 
             embeds = embeds.view(t, h // merge_size, merge_size,
                                  w // merge_size, merge_size, -1)

@@ -44,17 +44,23 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
         if pixel_values_videos is not None:
-            B = pixel_values_videos.shape[0]
+            n_videos = video_grid_thw.shape[0]
+            pps      = base_model.model.visual.patches_per_side
             video_embeds_list = []
+            tile_offset = 0
 
-            for b in range(B):
-                pv = pixel_values_videos[b:b+1]
-                vg = video_grid_thw[b:b+1]
+            for vid_idx in range(n_videos):
+                t, h, w = video_grid_thw[vid_idx].tolist()
+                n_tiles  = (h * w) // (pps * pps)
+
+                pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
+                vg = video_grid_thw[vid_idx:vid_idx + 1]
                 output = base_model.model.get_video_features(pv, vg)
 
                 embeds = output.pooler_output[0]
                 video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-            
+                tile_offset += n_tiles
+
             video_embeds = torch.cat(video_embeds_list, dim=0)
             video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
             _, video_mask = base_model.model.get_placeholder_mask(
@@ -111,13 +117,21 @@ class Gemma4VJEPATemplate(Gemma4Template):
             )
 
         if pixel_values_videos is not None:
+            n_videos = video_grid_thw.shape[0]
+            pps      = base_model.visual.patches_per_side
             video_embeds_list = []
-            for b in range(pixel_values_videos.shape[0]):
-                pv = pixel_values_videos[b:b+1]
-                vg = video_grid_thw[b:b+1]
+            tile_offset = 0
+
+            for vid_idx in range(n_videos):
+                t, h, w = video_grid_thw[vid_idx].tolist()
+                n_tiles  = (h * w) // (pps * pps)
+
+                pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
+                vg = video_grid_thw[vid_idx:vid_idx + 1]
                 output = base_model.get_video_features(pv, vg)
                 embeds = output.pooler_output[0]
                 video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                tile_offset += n_tiles
 
             video_embeds = torch.cat(video_embeds_list, dim=0)
             video_embeds = video_embeds.to(inputs_embeds.device, inputs_embeds.dtype)

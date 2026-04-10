@@ -10,7 +10,6 @@ from transformers.models.gemma4.processing_gemma4 import Gemma4Processor
 from transformers.image_utils import SizeDict
 from transformers.image_processing_utils import BatchFeature
 from transformers.image_processing_utils_fast import group_images_by_shape, reorder_images
-from transformers.video_utils import group_videos_by_shape, reorder_videos
 
 import torch
 
@@ -47,6 +46,21 @@ VJEPA2L_CFG = VoRAVisionConfig("facebook/vjepa2-vitl-fpc64-256")
 VJEPA2G_CFG = VoRAVisionConfig("facebook/vjepa2-vitg-fpc64-256")
 
 
+def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
+    """가로세로 비율에 가장 가깝고 n_rows*n_cols <= max_tiles 인 (n_rows, n_cols) 반환."""
+    aspect = orig_w / orig_h
+    best, best_score = (1, 1), float('inf')
+    for n_rows in range(1, max_tiles + 1):
+        for n_cols in range(1, max_tiles + 1):
+            if n_rows * n_cols > max_tiles:
+                continue
+            score = abs(math.log(aspect / (n_cols / n_rows)))
+            if score < best_score:
+                best_score = score
+                best = (n_rows, n_cols)
+    return best
+
+
 class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
     def __init__(self, vision_model_id: str="facebook/vjepa2-vitl-fpc64-256", **kwargs):
         cfg = VoRAVisionConfig(vision_model_id)
@@ -64,21 +78,6 @@ class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
         self.patch_size   = cfg.patch_size
         self.image_size   = cfg.image_size
 
-    @staticmethod
-    def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
-        """가로세로 비율에 가장 가깝고 n_rows*n_cols <= max_tiles 인 (n_rows, n_cols) 반환."""
-        aspect = orig_w / orig_h
-        best, best_score = (1, 1), float('inf')
-        for n_rows in range(1, max_tiles + 1):
-            for n_cols in range(1, max_tiles + 1):
-                if n_rows * n_cols > max_tiles:
-                    continue
-                score = abs(math.log(aspect / (n_cols / n_rows)))
-                if score < best_score:
-                    best_score = score
-                    best = (n_rows, n_cols)
-        return best
-
     def _preprocess(self, images, do_resize, size, disable_grouping=None, **kwargs):
         max_tiles      = int(os.environ.get("IMAGE_MAX_TILES", "4"))
         merge          = getattr(self, 'merge_size', 2)
@@ -95,7 +94,7 @@ class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
         for img in images:
             # img: [C, H, W]
             _, orig_h, orig_w = img.shape
-            n_rows, n_cols = self._select_tile_layout(orig_h, orig_w, max_tiles)
+            n_rows, n_cols = _select_tile_layout(orig_h, orig_w, max_tiles)
             n_tiles = n_rows * n_cols
 
             # (n_rows × image_size) × (n_cols × image_size) 로 리사이즈
@@ -161,40 +160,58 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
-        grouped_videos, indices = group_videos_by_shape(videos)
-        processed_groups = {}
+        max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
+        merge          = getattr(self, 'merge_size', 2)
+        h_patch        = self.image_size // self.patch_size   # 24
+        rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
+        do_rescale     = kwargs.get("do_rescale", True)
+        image_mean     = kwargs.get("image_mean")
+        image_std      = kwargs.get("image_std")
 
-        for shape, stacked_videos in grouped_videos.items():
-            B, T, C, H, W = stacked_videos.shape
+        all_tiles    = []
+        all_grid_thw = []
+        all_tokens   = []
 
-            stacked_videos = stacked_videos.view(B * T, C, H, W)
-            stacked_videos = self.resize(stacked_videos, SizeDict(height=self.image_size, width=self.image_size))
-            stacked_videos = stacked_videos.view(B, T, C, self.image_size, self.image_size)
+        for vid in videos:
+            # vid: [T, C, H, W]
+            T, C, orig_h, orig_w = vid.shape
+            n_rows, n_cols = _select_tile_layout(orig_h, orig_w, max_tiles)
+            n_tiles = n_rows * n_cols
 
-            if kwargs.get("do_rescale", True):
-                stacked_videos = stacked_videos * kwargs.get("rescale_factor", 1/255.0)
+            # 모든 프레임을 n_rows*384 × n_cols*384 로 리사이즈 (T가 배치 차원으로 동작)
+            frames = self.resize(
+                vid,
+                SizeDict(height=n_rows * self.image_size, width=n_cols * self.image_size),
+            )  # [T, C, target_h, target_w]
 
-            mean = torch.tensor(kwargs.get("image_mean"), dtype=stacked_videos.dtype, device=stacked_videos.device).view(1, 1, 3, 1, 1)
-            std  = torch.tensor(kwargs.get("image_std"),  dtype=stacked_videos.dtype, device=stacked_videos.device).view(1, 1, 3, 1, 1)
-            stacked_videos = (stacked_videos - mean) / std
-            processed_groups[shape] = stacked_videos
+            if do_rescale:
+                frames = frames * rescale_factor
 
-        processed_videos = reorder_videos(processed_groups, indices)
-        pixel_values_videos = torch.stack(processed_videos)
+            mean = torch.tensor(image_mean, dtype=frames.dtype, device=frames.device).view(1, 3, 1, 1)
+            std  = torch.tensor(image_std,  dtype=frames.dtype, device=frames.device).view(1, 3, 1, 1)
+            frames = (frames - mean) / std  # [T, C, target_h, target_w]
 
-        B, T = pixel_values_videos.shape[:2]
-        h = w  = self.image_size // self.patch_size
-        grid_t = T // self.tubelet_size
+            # 공간 타일 분할: [n_tiles, T, C, 384, 384]
+            tiles = frames.view(T, C, n_rows, self.image_size, n_cols, self.image_size)
+            tiles = tiles.permute(2, 4, 0, 1, 3, 5).contiguous()  # [n_rows, n_cols, T, C, 384, 384]
+            tiles = tiles.reshape(n_tiles, T, C, self.image_size, self.image_size)
 
-        video_grid_thw = torch.tensor([[grid_t, h, w]] * B, dtype=torch.long)
+            grid_t  = T // self.tubelet_size
+            h_total = h_patch * n_rows
+            w_total = h_patch * n_cols
 
-        merge = getattr(self, 'merge_size', 2)
-        tokens_per_frame = (self.image_size // self.patch_size // merge) ** 2
+            all_tiles.append(tiles)
+            all_grid_thw.append([grid_t, h_total, w_total])
+            all_tokens.append(grid_t * (h_total // merge) * (w_total // merge))
+
+        pixel_values_videos = torch.cat(all_tiles, dim=0)
+        video_grid_thw      = torch.tensor(all_grid_thw, dtype=torch.long)
+
         return BatchFeature(
             data={
-                "pixel_values_videos": pixel_values_videos,
-                "video_grid_thw":      video_grid_thw,
-                "num_soft_tokens_per_video": [grid_t * tokens_per_frame] * B,
+                "pixel_values_videos":       pixel_values_videos,
+                "video_grid_thw":            video_grid_thw,
+                "num_soft_tokens_per_video": all_tokens,
             },
             tensor_type=kwargs.get("return_tensors", None),
         )
