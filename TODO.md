@@ -43,10 +43,36 @@ VoRA (VJEPA2 + Qwen3.5-0.8B)가 base Qwen3.5-0.8B보다 video description 품질
 
 ---
 
-## 우선순위 3 — 추후 개선
+## 우선순위 3 — Gemma-4 백본 통합 (VJEPA2 + Gemma-4-E4B)
 
-- [ ] **3-A. VJEPA2 마지막 2 블록 unfreeze** (Stage 2)
-  - `model.py` freeze 로직 변경 + `instruction.sh` encoder LR 별도 설정
+Gemma-4는 네이티브 SigLIP 비전을 가진 멀티모달 모델. 해당 비전 타워를 VJEPA2로 교체하는 것이 핵심.
 
-- [ ] **3-B. Caption-only 데이터 필터링**
-  - LLaVA 데이터에서 "describe"/"caption" 포함 샘플만 추출 → Stage 1에서 2x 가중치
+- [ ] **3-A. Processor** (`src/processor/processor.py`)
+  - `VJEPAImageProcessor._preprocess()`에 `num_soft_tokens_per_image` 필드 추가 (Gemma4Processor 호환)
+  - `VJEPAVideoProcessor._preprocess()`에 `num_soft_tokens_per_video` 필드 추가
+  - `Gemma4VJEPAProcessor(Gemma4Processor)` 추가: `image_processor`/`video_processor`를 VJEPA 버전으로 교체, `image_seq_length` = VJEPA 토큰 수 (vitl 기준 144)
+  - Variants: `Gemma4VJepa2LProcessor`, `Gemma4VJepa2GProcessor`, `Gemma4VJEPA21B/L/GProcessor`
+
+- [ ] **3-B. Model** (`src/model/model.py`)
+  - `Gemma4VJEPAModel(Gemma4ForConditionalGeneration)` 추가
+    - `get_image_features()` 오버라이드: `self.visual` (VJEPA2VisualModule) 사용, Qwen의 spatial merging 로직 그대로
+    - `get_video_features()`: `get_image_features()`에 위임
+    - `from_pretrained()`: Gemma4 로드 → VJEPA2 인코더 생성 → `model.visual`에 부착 (Qwen과 달리 outer class에 직접)
+  - `VJEPA2VisualModule` 재사용 (변경 없음)
+  - Variants: `Gemma4VJEPALModel`, `Gemma4VJEPAGModel`, `Gemma4VJEPA21B/L/GModel`
+  - ⚠️ checkpoint key prefix: `"visual."` (Qwen은 `"model.visual."`)
+
+- [ ] **3-C. Template** (`src/template/template.py`)
+  - `Gemma4VJEPATemplate(Gemma4Template)` 추가
+    - `_post_encode()`: VJEPA 임베딩 주입, `base_model.model.get_placeholder_mask()` 사용 (3-tuple 반환 — audio_mask 무시)
+    - `_data_collator()`: Gemma4는 mrope 없음 → `super()` 위임만으로 충분
+  - embed path: `base_model.model.get_input_embeddings()(input_ids)`
+
+- [ ] **3-D. Register** (`src/register.py`)
+  - `Gemma4VJEPALoaderBase(Gemma4Loader)` + 5개 variant loader
+  - `register_model_arch('gemma4_vjepa')`: `vision_tower=['visual.encoder']`, `aligner=['visual.merger']`
+  - `register_template('vora_gemma4')`: `Gemma4TemplateMeta` 사용
+  - `register_model` × 5: `vora-gemma4-vitl/vitg/vjepa21b/l/g`, base model `google/gemma-4-E4B`
+
+- [ ] **3-E. Scripts**
+  - `scripts/align_gemma4.sh`, `scripts/instruction_gemma4.sh`, `scripts/infer_gemma4.sh` 추가

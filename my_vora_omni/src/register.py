@@ -8,8 +8,10 @@ from swift.model import (
     register_model_arch
 )
 from swift.model.models.qwen import Qwen3_5Loader
+from swift.model.models.gemma import Gemma4Loader
 from swift.template import register_template
 from swift.template.templates.qwen import QwenTemplateMeta
+from swift.template.templates.gemma import Gemma4TemplateMeta
 
 from transformers import AutoImageProcessor, AutoVideoProcessor
 from my_vora_omni.src.processor.processor import (
@@ -18,6 +20,11 @@ from my_vora_omni.src.processor.processor import (
     Qwen3VLVJepa21BProcessor,
     Qwen3VLVJepa21LProcessor,
     Qwen3VLVJepa21GProcessor,
+    Gemma4VJepa2LProcessor,
+    Gemma4VJepa2GProcessor,
+    Gemma4VJEPA21BProcessor,
+    Gemma4VJEPA21LProcessor,
+    Gemma4VJEPA21GProcessor,
     VJEPAImageProcessor,
     VJEPAVideoProcessor
 )
@@ -28,8 +35,13 @@ from my_vora_omni.src.model.model import (
     Qwen3_5VJEPA21BModel,
     Qwen3_5VJEPA21LModel,
     Qwen3_5VJEPA21GModel,
+    Gemma4VJEPALModel,
+    Gemma4VJEPAGModel,
+    Gemma4VJEPA21BModel,
+    Gemma4VJEPA21LModel,
+    Gemma4VJEPA21GModel,
 )
-from my_vora_omni.src.template.template import Qwen3_5VJEPATemplate
+from my_vora_omni.src.template.template import Qwen3_5VJEPATemplate, Gemma4VJEPATemplate
 
 
 AutoImageProcessor.register(
@@ -170,5 +182,142 @@ register_model(
         Qwen35VJEPA21GLoader,
         architectures=['Qwen3_5VJEPA21GModel'],
         **_COMMON,
+    )
+)
+
+
+# ──────────────────────────────────────────────
+# Gemma-4 Registration
+# ──────────────────────────────────────────────
+
+class Gemma4VJEPALoaderBase(Gemma4Loader):
+    PROCESSOR_CLS = None
+    MODEL_CLS     = None
+
+    def get_processor(self, model_dir, config):
+        return self.PROCESSOR_CLS.from_pretrained(model_dir)
+
+    def get_model(self, model_dir, config, processor, model_kwargs):
+        self.auto_model_cls = self.MODEL_CLS
+        return super().get_model(model_dir, config, processor, model_kwargs)
+
+
+class Gemma4VJEPALLoader(Gemma4VJEPALoaderBase):
+    PROCESSOR_CLS = Gemma4VJepa2LProcessor
+    MODEL_CLS     = Gemma4VJEPALModel
+
+class Gemma4VJEPAGLoader(Gemma4VJEPALoaderBase):
+    PROCESSOR_CLS = Gemma4VJepa2GProcessor
+    MODEL_CLS     = Gemma4VJEPAGModel
+
+class Gemma4VJEPA21BLoader(Gemma4VJEPALoaderBase):
+    PROCESSOR_CLS = Gemma4VJEPA21BProcessor
+    MODEL_CLS     = Gemma4VJEPA21BModel
+
+class Gemma4VJEPA21LLoader(Gemma4VJEPALoaderBase):
+    PROCESSOR_CLS = Gemma4VJEPA21LProcessor
+    MODEL_CLS     = Gemma4VJEPA21LModel
+
+class Gemma4VJEPA21GLoader(Gemma4VJEPALoaderBase):
+    PROCESSOR_CLS = Gemma4VJEPA21GProcessor
+    MODEL_CLS     = Gemma4VJEPA21GModel
+
+
+register_model_arch(
+    MultiModelKeys(
+        'gemma4_vjepa',
+        language_model=['model.language_model', 'lm_head'],
+        vision_tower=['visual.encoder'],   # outer class에 직접 부착 — "model." prefix 없음
+        aligner=['visual.merger'],
+    )
+)
+
+register_template(
+    Gemma4TemplateMeta(
+        'vora_gemma4',
+        template_cls=Gemma4VJEPATemplate,
+    )
+)
+
+_COMMON_GEMMA4 = dict(
+    template='vora_gemma4',
+    is_multimodal=True,
+    model_arch='gemma4_vjepa',
+    requires=['transformers>=4.53'],
+    tags=['vision', 'video'],
+)
+
+register_model(
+    ModelMeta(
+        'vora-gemma4-vitl',
+        [ModelGroup([
+            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+        ])],
+        Gemma4VJEPALLoader,
+        architectures=['Gemma4VJEPALModel'],
+        **_COMMON_GEMMA4,
+    )
+)
+
+register_model(
+    ModelMeta(
+        'vora-gemma4-vitg',
+        [ModelGroup([
+            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+        ])],
+        Gemma4VJEPAGLoader,
+        architectures=['Gemma4VJEPAGModel'],
+        **_COMMON_GEMMA4,
+    )
+)
+
+register_model(
+    ModelMeta(
+        'vora-gemma4-vjepa21b',
+        [ModelGroup([
+            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+        ])],
+        Gemma4VJEPA21BLoader,
+        architectures=['Gemma4VJEPA21BModel'],
+        **_COMMON_GEMMA4,
+    )
+)
+
+register_model(
+    ModelMeta(
+        'vora-gemma4-vjepa21l',
+        [ModelGroup([
+            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+        ])],
+        Gemma4VJEPA21LLoader,
+        architectures=['Gemma4VJEPA21LModel'],
+        **_COMMON_GEMMA4,
+    )
+)
+
+register_model(
+    ModelMeta(
+        'vora-gemma4-vjepa21g',
+        [ModelGroup([
+            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+        ])],
+        Gemma4VJEPA21GLoader,
+        architectures=['Gemma4VJEPA21GModel'],
+        **_COMMON_GEMMA4,
     )
 )

@@ -1,18 +1,170 @@
 # my_vora_omni
 
-VoRA의 MS-Swift external plugin 패키지입니다. `swift sft` / `swift infer` 실행 시 `--external_plugins 'my_vora_omni'` 옵션으로 로드됩니다.
+MS-Swift external plugin package for **VoRA** (Vision-Language Representation Alignment). Loaded via `--external_plugins 'my_vora_omni'` when running `swift sft` / `swift infer`.
 
-## 패키지 진입점
+When `__init__.py` is loaded, `src/register.py` runs and registers all models and templates with Swift.
 
-`__init__.py`가 로드되면 `src/register.py`가 실행되어 swift에 모델/템플릿을 등록합니다.
+---
 
-## 하위 구조
+## Package Structure
 
-| 경로 | 역할 |
+| Path | Description |
 |---|---|
-| `src/` | 모델, 프로세서, 템플릿 구현 및 swift 등록 |
-| `scripts/` | 학습(3단계), 추론, 벤치마크, 익스포트 셸 스크립트 |
+| `src/model/model.py` | Vision module (`VJEPA2VisualModule`) and LLM integration for each backbone |
+| `src/processor/processor.py` | Image/video preprocessors (VJEPA normalization, grid metadata) |
+| `src/template/template.py` | Training templates — visual embedding injection via `_post_encode` |
+| `src/register.py` | Registers all model variants and templates with Swift |
+| `scripts/` | Shell scripts for training (3 stages), inference, benchmark, and export |
 
-## 실행 위치
+> All scripts must be run from the **repo root** (`deep-vl-models/`) with `./deep-vl-models` on `PYTHONPATH`.
 
-모든 스크립트는 **repo 루트**(`deep-vl-models/`)에서 실행해야 합니다. `PYTHONPATH`에 `./deep-vl-models`가 포함되어 있어야 합니다.
+---
+
+## Supported Backbones
+
+### Qwen3.5 + VJEPA2
+
+| Swift Model ID | Vision Encoder | LLM |
+|---|---|---|
+| `vora-qwen35-vitl` | VJEPA2 ViT-L (HuggingFace) | Qwen3.5-0.8B / 2B |
+| `vora-qwen35-vitg` | VJEPA2 ViT-G (HuggingFace) | Qwen3.5-0.8B / 2B |
+| `vora-qwen35-vjepa21b` | VJEPA2.1 Base (torch.hub) | Qwen3.5-0.8B / 2B |
+| `vora-qwen35-vjepa21l` | VJEPA2.1 Large (torch.hub) | Qwen3.5-0.8B / 2B |
+| `vora-qwen35-vjepa21g` | VJEPA2.1 Giant (torch.hub) | Qwen3.5-0.8B / 2B |
+
+**Scripts:** `align.sh`, `instruction.sh`, `infer.sh`, `export.sh`
+
+### Gemma-4 + VJEPA2
+
+| Swift Model ID | Vision Encoder | LLM |
+|---|---|---|
+| `vora-gemma4-vitl` | VJEPA2 ViT-L (HuggingFace) | Gemma-4 E2B / E4B |
+| `vora-gemma4-vitg` | VJEPA2 ViT-G (HuggingFace) | Gemma-4 E2B / E4B |
+| `vora-gemma4-vjepa21b` | VJEPA2.1 Base (torch.hub) | Gemma-4 E2B / E4B |
+| `vora-gemma4-vjepa21l` | VJEPA2.1 Large (torch.hub) | Gemma-4 E2B / E4B |
+| `vora-gemma4-vjepa21g` | VJEPA2.1 Giant (torch.hub) | Gemma-4 E2B / E4B |
+
+**Scripts:** `align_gemma4.sh`, `instruction_gemma4.sh`, `infer_gemma4.sh`, `export_gemma4.sh`
+
+> Requires `transformers>=4.53`
+
+---
+
+## Training Pipeline
+
+Three-stage pipeline. Scripts auto-detect GPU count; override with `CUDA_VISIBLE_DEVICES`.
+
+### Stage 1 — Visual Alignment
+
+Freezes the LLM and vision encoder. Trains the merger MLP only.
+
+**Qwen3.5:**
+```bash
+cd my_vora_omni
+bash scripts/align.sh [model_id] [encoder]
+# e.g.: bash scripts/align.sh Qwen/Qwen3.5-0.8B vitl
+```
+
+**Gemma-4:**
+```bash
+bash scripts/align_gemma4.sh [model_id] [encoder]
+# e.g.: bash scripts/align_gemma4.sh google/gemma-4-E4B vitl
+#       bash scripts/align_gemma4.sh google/gemma-4-E2B-it vitl
+```
+
+### Stage 2 — Instruction Tuning
+
+LoRA on the LLM + merger/aligner trainable.
+
+**Qwen3.5:**
+```bash
+bash scripts/instruction.sh <stage1_checkpoint> [encoder]
+# e.g.: bash scripts/instruction.sh ./output/Qwen3.5-0.8B-vitl-align vitl
+```
+
+**Gemma-4:**
+```bash
+bash scripts/instruction_gemma4.sh <stage1_checkpoint> [encoder]
+# e.g.: bash scripts/instruction_gemma4.sh ./output/gemma-4-E4B-vitl-align vitl
+```
+
+### Stage 3 — Export LoRA to Full Weights
+
+**Qwen3.5:**
+```bash
+bash scripts/export.sh <lora_checkpoint> [encoder]
+```
+
+**Gemma-4:**
+```bash
+bash scripts/export_gemma4.sh <lora_checkpoint> [encoder]
+```
+
+---
+
+## Inference
+
+**Qwen3.5:**
+```bash
+bash scripts/infer.sh <checkpoint> [encoder] [dataset_jsonl]
+# e.g.: bash scripts/infer.sh ./output/Qwen3.5-0.8B-vitl-instruct vitl ./scripts/jsonl/infer.jsonl
+```
+
+**Gemma-4:**
+```bash
+bash scripts/infer_gemma4.sh <checkpoint> [encoder] [dataset_jsonl]
+# e.g.: bash scripts/infer_gemma4.sh ./output/gemma-4-E4B-vitl-align vitl ./scripts/jsonl/infer.jsonl
+```
+
+Accepts both LoRA (Stage 2) and full model (Stage 1/3) checkpoints.
+
+---
+
+## Architecture
+
+```
+VJEPA2 Encoder (frozen) → Merger (LayerNorm→Linear→GELU→Linear→GELU→LayerNorm→Linear→LayerNorm) → LLM
+```
+
+The merger is the only component trained in Stage 1. Stage 2 adds LoRA adapters to the LLM.
+
+### Backbone Differences
+
+| | Qwen3.5 | Gemma-4 |
+|---|---|---|
+| `visual` location | `model.model.visual` (inner model) | `model.visual` (outer model) |
+| Checkpoint key prefix | `model.visual.*` | `visual.*` |
+| Position encoding | mRoPE (multi-dimensional) | Standard RoPE |
+| Template `_data_collator` | mRoPE position_ids splitting | Delegates to parent |
+| `modules_to_save` | `model.visual.merger` | `visual.merger` |
+
+### Encoder Options
+
+| Encoder flag | Model ID | Image size | Tokens/image |
+|---|---|---|---|
+| `vitl` | `facebook/vjepa2-vitl-fpc64-256` | 256×256 | 64 |
+| `vitg` | `facebook/vjepa2-vitg-fpc64-256` | 256×256 | 64 |
+| `vjepa21b` | `vjepa2_1_vit_base_384` (torch.hub) | 384×384 | 144 |
+| `vjepa21l` | `vjepa2_1_vit_large_384` (torch.hub) | 384×384 | 144 |
+| `vjepa21g` | `vjepa2_1_vit_giant_384` (torch.hub) | 384×384 | 144 |
+
+---
+
+## Data Format (JSONL)
+
+```json
+{"messages": [{"role": "user", "content": "<image>\nDescribe this."}], "images": ["path/to/img.jpg"]}
+{"messages": [{"role": "user", "content": "<video>\nWhat happens?"}], "videos": ["path/to/video.mp4"]}
+```
+
+---
+
+## Key Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `CUDA_VISIBLE_DEVICES` | `0` (infer) / `0,1,2,3` (train) | GPU selection |
+| `FPS_MAX_FRAMES` | 16–32 | Max video frames |
+| `VIDEO_MAX_PIXELS` | 50176 | Max pixels per frame |
+| `HF_HUB_OFFLINE` | `0` | Set to `1` for air-gapped environments |
+| `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` | GPU memory management |

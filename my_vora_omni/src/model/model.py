@@ -6,6 +6,7 @@ from torch import nn
 from transformers import AutoModel, Qwen3_5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
+from transformers import Gemma4ForConditionalGeneration
 
 
 class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
@@ -212,4 +213,141 @@ class Qwen3_5VJEPA21LModel(Qwen3_5VJEPA21Model):
 class Qwen3_5VJEPA21GModel(Qwen3_5VJEPA21Model):
     TORCH_HUB_NAME = "vjepa2_1_vit_giant_384"
 
-    
+
+# ──────────────────────────────────────────────
+# Gemma-4 Models
+# ──────────────────────────────────────────────
+
+class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
+    VISION_MODEL_ID = None
+
+    def get_image_features(self, pixel_values, image_grid_thw, image_position_ids=None, **kwargs):
+        image_embeds = self.visual(pixel_values)  # [B, N, D]
+        merge_size = self.config.vision_config.spatial_merge_size
+        results = []
+
+        vid_idx = 0
+        offset = 0
+        for grid_idx in range(image_grid_thw.shape[0]):
+            t, h, w = image_grid_thw[grid_idx].tolist()
+            n = t * h * w
+
+            embeds = image_embeds[vid_idx, offset:offset + n]
+            embeds = embeds.view(t, h // merge_size, merge_size,
+                                 w // merge_size, merge_size, -1)
+            embeds = embeds.permute(0, 1, 3, 2, 4, 5)
+            embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size),
+                                    merge_size ** 2 * embeds.shape[-1])
+            embeds = embeds.to(self.visual.dtype)
+            embeds = self.visual.merger(embeds)
+            results.append(embeds)
+
+            offset += n
+            if offset >= image_embeds.shape[1]:
+                vid_idx += 1
+                offset = 0
+
+        return BaseModelOutputWithPooling(pooler_output=tuple(results))
+
+    def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
+        return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        kwargs.setdefault("ignore_mismatched_sizes", True)
+        model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        vjepa2    = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
+        vjepa_dim = vjepa2.config.hidden_size
+        model.config.vision_config.spatial_merge_size = 2
+        merge_size = model.config.vision_config.spatial_merge_size
+        llm_dim    = model.config.text_config.hidden_size
+
+        device = next(model.model.language_model.parameters()).device
+        dtype  = next(model.model.language_model.parameters()).dtype
+
+        visual = VJEPA2VisualModule(vjepa2, vjepa_dim, merge_size, llm_dim).to(device=device, dtype=dtype)
+
+        # visual은 outer class에 직접 붙으므로 key prefix = "visual." (Qwen은 "model.visual.")
+        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        if os.path.exists(ckpt_file):
+            visual_state = {}
+            with safe_open(ckpt_file, framework="pt") as f:
+                for k in f.keys():
+                    if k.startswith("visual."):
+                        new_k = k.replace("visual.", "")
+                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
+            if visual_state:
+                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
+                print(f"visual weights loaded: {len(visual_state)} keys")
+                print(f"missing: {missing}")
+
+        for param in visual.encoder.parameters():
+            param.requires_grad = False
+
+        model.visual = visual
+        return model
+
+
+class Gemma4VJEPALModel(Gemma4VJEPAModel):
+    VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
+
+
+class Gemma4VJEPAGModel(Gemma4VJEPAModel):
+    VISION_MODEL_ID = "facebook/vjepa2-vitg-fpc64-256"
+
+
+class Gemma4VJEPA21Model(Gemma4VJEPAModel):
+    TORCH_HUB_NAME = None
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        kwargs.setdefault("ignore_mismatched_sizes", True)
+        model = Gemma4ForConditionalGeneration.from_pretrained(
+            pretrained_model_name_or_path, *args, **kwargs)
+        model.config.vision_config.spatial_merge_size = 2
+
+        encoder, _ = torch.hub.load(
+            'facebookresearch/vjepa2',
+            cls.TORCH_HUB_NAME
+        )
+
+        vjepa_dim  = encoder.img_mod_embed.shape[-1]
+        merge_size = model.config.vision_config.spatial_merge_size
+        llm_dim    = model.config.text_config.hidden_size
+
+        device = next(model.model.language_model.parameters()).device
+        dtype  = next(model.model.language_model.parameters()).dtype
+
+        visual = VJEPA2VisualModule(encoder, vjepa_dim, merge_size, llm_dim, is_v21=True).to(device=device, dtype=dtype)
+
+        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        if os.path.exists(ckpt_file):
+            visual_state = {}
+            with safe_open(ckpt_file, framework="pt") as f:
+                for k in f.keys():
+                    if k.startswith("visual."):
+                        new_k = k.replace("visual.", "")
+                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
+            if visual_state:
+                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
+                print(f"visual weights loaded: {len(visual_state)} keys")
+
+        for param in visual.encoder.parameters():
+            param.requires_grad = False
+
+        model.visual = visual
+
+        target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model = model.to(target_device)
+        return model
+
+
+class Gemma4VJEPA21BModel(Gemma4VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_base_384"
+
+class Gemma4VJEPA21LModel(Gemma4VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_large_384"
+
+class Gemma4VJEPA21GModel(Gemma4VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_giant_384"

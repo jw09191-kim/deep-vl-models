@@ -5,6 +5,7 @@ from transformers import (
     Qwen3VLProcessor,
     AutoConfig,
 )
+from transformers.models.gemma4.processing_gemma4 import Gemma4Processor
 from transformers.image_utils import SizeDict
 from transformers.image_processing_utils import BatchFeature
 from transformers.image_processing_utils_fast import group_images_by_shape, reorder_images
@@ -86,8 +87,14 @@ class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
 
         image_grid_thw = torch.tensor([[1, h, w]] * B, dtype=torch.long)
 
+        merge = getattr(self, 'merge_size', 2)
+        tokens_per_image = (self.image_size // self.patch_size // merge) ** 2
         return BatchFeature(
-            data={"pixel_values": pixel_values, "image_grid_thw": image_grid_thw},
+            data={
+                "pixel_values": pixel_values,
+                "image_grid_thw": image_grid_thw,
+                "num_soft_tokens_per_image": [tokens_per_image] * B,
+            },
             tensor_type=kwargs.get("return_tensors", None),
         )
 
@@ -140,10 +147,13 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
 
         video_grid_thw = torch.tensor([[grid_t, h, w]] * B, dtype=torch.long)
 
+        merge = getattr(self, 'merge_size', 2)
+        tokens_per_frame = (self.image_size // self.patch_size // merge) ** 2
         return BatchFeature(
             data={
                 "pixel_values_videos": pixel_values_videos,
                 "video_grid_thw":      video_grid_thw,
+                "num_soft_tokens_per_video": [grid_t * tokens_per_frame] * B,
             },
             tensor_type=kwargs.get("return_tensors", None),
         )
@@ -179,3 +189,44 @@ class Qwen3VLVJepa21GProcessor(Qwen3VLVJEPAProcessor):
     VISION_MODEL_ID = "vjepa2_1_vit_giant_384"
 
 
+# ──────────────────────────────────────────────
+# Gemma-4 Processors
+# ──────────────────────────────────────────────
+
+class Gemma4VJEPAProcessor(Gemma4Processor):
+    VISION_MODEL_ID = None
+
+    def __init__(self, feature_extractor=None, image_processor=None, tokenizer=None,
+                 video_processor=None, chat_template=None, **kwargs):
+        cfg = VoRAVisionConfig(self.VISION_MODEL_ID)
+        image_seq_length = (cfg.image_size // cfg.patch_size // cfg.MERGE_SIZE) ** 2
+
+        # Always replace with VJEPA processors
+        image_processor = VJEPAImageProcessor(self.VISION_MODEL_ID)
+        video_processor = VJEPAVideoProcessor(self.VISION_MODEL_ID)
+
+        super().__init__(
+            feature_extractor=feature_extractor,
+            image_processor=image_processor,
+            tokenizer=tokenizer,
+            video_processor=video_processor,
+            chat_template=chat_template,
+            image_seq_length=image_seq_length,
+            **kwargs,
+        )
+
+
+class Gemma4VJepa2LProcessor(Gemma4VJEPAProcessor):
+    VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
+
+class Gemma4VJepa2GProcessor(Gemma4VJEPAProcessor):
+    VISION_MODEL_ID = "facebook/vjepa2-vitg-fpc64-256"
+
+class Gemma4VJEPA21BProcessor(Gemma4VJEPAProcessor):
+    VISION_MODEL_ID = "vjepa2_1_vit_base_384"
+
+class Gemma4VJEPA21LProcessor(Gemma4VJEPAProcessor):
+    VISION_MODEL_ID = "vjepa2_1_vit_large_384"
+
+class Gemma4VJEPA21GProcessor(Gemma4VJEPAProcessor):
+    VISION_MODEL_ID = "vjepa2_1_vit_giant_384"
