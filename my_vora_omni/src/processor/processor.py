@@ -1,4 +1,5 @@
 import os
+import math
 from transformers import (
     Qwen2VLImageProcessorFast,
     Qwen3VLVideoProcessor,
@@ -63,37 +64,77 @@ class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
         self.patch_size   = cfg.patch_size
         self.image_size   = cfg.image_size
 
+    @staticmethod
+    def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
+        """가로세로 비율에 가장 가깝고 n_rows*n_cols <= max_tiles 인 (n_rows, n_cols) 반환."""
+        aspect = orig_w / orig_h
+        best, best_score = (1, 1), float('inf')
+        for n_rows in range(1, max_tiles + 1):
+            for n_cols in range(1, max_tiles + 1):
+                if n_rows * n_cols > max_tiles:
+                    continue
+                score = abs(math.log(aspect / (n_cols / n_rows)))
+                if score < best_score:
+                    best_score = score
+                    best = (n_rows, n_cols)
+        return best
+
     def _preprocess(self, images, do_resize, size, disable_grouping=None, **kwargs):
-        grouped_images, indices = group_images_by_shape(images, disable_grouping=disable_grouping)
-        processed_groups = {}
+        max_tiles      = int(os.environ.get("IMAGE_MAX_TILES", "4"))
+        merge          = getattr(self, 'merge_size', 2)
+        h_patch        = self.image_size // self.patch_size
+        rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
+        do_rescale     = kwargs.get("do_rescale", True)
+        image_mean     = kwargs.get("image_mean")
+        image_std      = kwargs.get("image_std")
 
-        for shape, stacked_images in grouped_images.items():
-            stacked_images = self.resize(stacked_images, SizeDict(
-                height=self.image_size, width=self.image_size,
-            ))
-            if kwargs.get("do_rescale", True):
-                stacked_images = stacked_images * kwargs.get("rescale_factor", 1/255.0)
+        all_tiles    = []
+        all_grid_thw = []
+        all_tokens   = []
 
-            mean = torch.tensor(kwargs.get("image_mean"), dtype=stacked_images.dtype, device=stacked_images.device).view(1, 3, 1, 1)
-            std  = torch.tensor(kwargs.get("image_std"),  dtype=stacked_images.dtype, device=stacked_images.device).view(1, 3, 1, 1)
-            stacked_images = (stacked_images - mean) / std
-            processed_groups[shape] = stacked_images
+        for img in images:
+            # img: [C, H, W]
+            _, orig_h, orig_w = img.shape
+            n_rows, n_cols = self._select_tile_layout(orig_h, orig_w, max_tiles)
+            n_tiles = n_rows * n_cols
 
-        processed_images = reorder_images(processed_groups, indices)
-        pixel_values = torch.stack(processed_images).unsqueeze(1).repeat(1, self.tubelet_size, 1, 1, 1)
+            # (n_rows × image_size) × (n_cols × image_size) 로 리사이즈
+            img_batch = self.resize(img.unsqueeze(0), SizeDict(
+                height=n_rows * self.image_size,
+                width=n_cols  * self.image_size,
+            ))  # [1, C, target_h, target_w]
 
-        B  = pixel_values.shape[0]
-        h  = w = self.image_size // self.patch_size  # 16
+            if do_rescale:
+                img_batch = img_batch * rescale_factor
 
-        image_grid_thw = torch.tensor([[1, h, w]] * B, dtype=torch.long)
+            mean = torch.tensor(image_mean, dtype=img_batch.dtype, device=img_batch.device).view(1, 3, 1, 1)
+            std  = torch.tensor(image_std,  dtype=img_batch.dtype, device=img_batch.device).view(1, 3, 1, 1)
+            img_batch = (img_batch - mean) / std
+            img_norm = img_batch.squeeze(0)  # [C, target_h, target_w]
 
-        merge = getattr(self, 'merge_size', 2)
-        tokens_per_image = (self.image_size // self.patch_size // merge) ** 2
+            # 타일 분할: [n_tiles, C, image_size, image_size]
+            C = img_norm.shape[0]
+            tiles = img_norm.view(C, n_rows, self.image_size, n_cols, self.image_size)
+            tiles = tiles.permute(1, 3, 0, 2, 4).contiguous().reshape(
+                n_tiles, C, self.image_size, self.image_size
+            )
+            # tubelet 차원 추가: [n_tiles, tubelet_size, C, H, W]
+            tiles = tiles.unsqueeze(1).repeat(1, self.tubelet_size, 1, 1, 1)
+
+            h_total = h_patch * n_rows
+            w_total = h_patch * n_cols
+            all_tiles.append(tiles)
+            all_grid_thw.append([1, h_total, w_total])
+            all_tokens.append((h_total // merge) * (w_total // merge))
+
+        pixel_values   = torch.cat(all_tiles, dim=0)   # [total_tiles, T, C, H, W]
+        image_grid_thw = torch.tensor(all_grid_thw, dtype=torch.long)
+
         return BatchFeature(
             data={
-                "pixel_values": pixel_values,
-                "image_grid_thw": image_grid_thw,
-                "num_soft_tokens_per_image": [tokens_per_image] * B,
+                "pixel_values":             pixel_values,
+                "image_grid_thw":           image_grid_thw,
+                "num_soft_tokens_per_image": all_tokens,
             },
             tensor_type=kwargs.get("return_tensors", None),
         )

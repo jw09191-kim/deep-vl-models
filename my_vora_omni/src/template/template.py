@@ -22,17 +22,23 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
         video_grid_thw      = inputs.get('video_grid_thw')
 
         if pixel_values is not None:
-            B = pixel_values.shape[0]
+            n_images = image_grid_thw.shape[0]
+            pps      = base_model.model.visual.patches_per_side
             image_embeds_list = []
-            
-            for b in range(B):
-                pv = pixel_values[b:b+1]
-                ig = image_grid_thw[b:b+1]
+            tile_offset = 0
+
+            for img_idx in range(n_images):
+                t, h, w = image_grid_thw[img_idx].tolist()
+                n_tiles  = (h * w) // (pps * pps) if t == 1 else 1
+
+                pv = pixel_values[tile_offset:tile_offset + n_tiles]
+                ig = image_grid_thw[img_idx:img_idx + 1]
                 output = base_model.model.get_image_features(pv, ig)
-                
+
                 embeds = output.pooler_output[0]
                 image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-            
+                tile_offset += n_tiles
+
             image_embeds = torch.cat(image_embeds_list, dim=0)
             image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
             image_mask, _ = base_model.model.get_placeholder_mask(
@@ -43,7 +49,7 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
         if pixel_values_videos is not None:
             B = pixel_values_videos.shape[0]
             video_embeds_list = []
-            
+
             for b in range(B):
                 pv = pixel_values_videos[b:b+1]
                 vg = video_grid_thw[b:b+1]
@@ -103,13 +109,21 @@ class Gemma4VJEPATemplate(Gemma4Template):
         video_grid_thw      = inputs.get('video_grid_thw')
 
         if pixel_values is not None:
+            n_images = image_grid_thw.shape[0]
+            pps      = base_model.visual.patches_per_side
             image_embeds_list = []
-            for b in range(pixel_values.shape[0]):
-                pv = pixel_values[b:b+1]
-                ig = image_grid_thw[b:b+1]
+            tile_offset = 0
+
+            for img_idx in range(n_images):
+                t, h, w = image_grid_thw[img_idx].tolist()
+                n_tiles  = (h * w) // (pps * pps) if t == 1 else 1
+
+                pv = pixel_values[tile_offset:tile_offset + n_tiles]
+                ig = image_grid_thw[img_idx:img_idx + 1]
                 output = base_model.get_image_features(pv, ig)
                 embeds = output.pooler_output[0]
                 image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                tile_offset += n_tiles
 
             image_embeds = torch.cat(image_embeds_list, dim=0)
             image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)

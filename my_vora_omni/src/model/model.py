@@ -12,19 +12,49 @@ from transformers import Gemma4ForConditionalGeneration
 class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
     
     def get_image_features(self, pixel_values, image_grid_thw, **kwargs):
-        image_embeds = self.visual(pixel_values)  # [B, N, D]
         merge_size = self.config.vision_config.spatial_merge_size
-        results = []
+        pps        = self.visual.patches_per_side   # patches-per-side per tile
+        ppt        = pps * pps                      # patches per tile
 
-        vid_idx = 0
-        offset = 0
+        # 모든 항목(타일 또는 비디오 클립)을 한 번에 인코딩
+        image_embeds = self.visual(pixel_values)    # [total_items, patches, D]
+
+        results     = []
+        item_offset = 0   # image_embeds 첫 번째 차원 인덱스
+        vid_offset  = 0   # 비디오 multi-clip용 내부 오프셋
+
         for grid_idx in range(image_grid_thw.shape[0]):
             t, h, w = image_grid_thw[grid_idx].tolist()
-            n = t * h * w
 
-            embeds = image_embeds[vid_idx, offset:offset + n]
+            if t == 1:   # 이미지 — 타일링 지원
+                n_tiles = (h * w) // ppt
+
+                if n_tiles == 1:
+                    embeds = image_embeds[item_offset]  # [h*w, D]
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
+                    # tiles: [n_tiles, pps*pps, D]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    # [n_rows, n_cols, pps, pps, D] → [h, w, D]
+                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
+                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
+                    assembled = assembled.reshape(h, w, -1)
+                    embeds    = assembled.reshape(h * w, -1)
+
+                item_offset += n_tiles
+
+            else:   # 비디오 — 기존 multi-clip 로직 유지
+                n      = t * h * w
+                embeds = image_embeds[item_offset, vid_offset:vid_offset + n]
+                vid_offset += n
+                if vid_offset >= image_embeds.shape[1]:
+                    item_offset += 1
+                    vid_offset   = 0
+
+            # 공간 merge (이미지/비디오 공통)
             embeds = embeds.view(t, h // merge_size, merge_size,
-                                w // merge_size, merge_size, -1)
+                                 w // merge_size, merge_size, -1)
             embeds = embeds.permute(0, 1, 3, 2, 4, 5)
             embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size),
                                     merge_size ** 2 * embeds.shape[-1])
@@ -32,34 +62,14 @@ class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
             embeds = self.visual.merger(embeds)
             results.append(embeds)
 
-            offset += n
-            if offset >= image_embeds.shape[1]:
-                vid_idx += 1
-                offset = 0
-
         return BaseModelOutputWithPooling(pooler_output=tuple(results))
 
     def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
         return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)  
 
-    def get_rope_index(self, input_ids, mm_token_type_ids, image_grid_thw=None, video_grid_thw=None, **kwargs):
-        if video_grid_thw is not None:
-            expanded = []
-            for thw in video_grid_thw:
-                t, h, w = thw.tolist()
-                expanded.extend([[1, h, w]] * t)
-            video_grid_thw = torch.tensor(expanded, dtype=torch.long, device=video_grid_thw.device)
-
-        return super().get_rope_index(
-            input_ids=input_ids,
-            mm_token_type_ids=mm_token_type_ids,
-            image_grid_thw=image_grid_thw,
-            video_grid_thw=video_grid_thw,
-            **kwargs,
-        )
-    
 class VJEPA2VisualModule(nn.Module):
-    def __init__(self, vjepa2_model, vjepa_dim, merge_size, llm_dim, is_v21=False):
+    def __init__(self, vjepa2_model, vjepa_dim, merge_size, llm_dim,
+                 is_v21=False, patches_per_side=16):
         super().__init__()
         in_dim     = vjepa_dim * merge_size ** 2
         hidden_dim = vjepa_dim * merge_size ** 2
@@ -79,14 +89,19 @@ class VJEPA2VisualModule(nn.Module):
         )
         self._merge_size = merge_size
         self._is_v21 = is_v21
+        self._patches_per_side = patches_per_side
 
     @property
     def dtype(self):
         return next(self.merger.parameters()).dtype
-    
+
     @property
     def spatial_merge_size(self):
         return self._merge_size
+
+    @property
+    def patches_per_side(self):
+        return self._patches_per_side
 
     def forward(self, pixel_values, **kwargs):
         if self._is_v21:
@@ -115,15 +130,19 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         # model.config.text_config.use_cache = True
         # model.model.language_model.config.use_cache = True
 
-        vjepa2     = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
-        vjepa_dim  = vjepa2.config.hidden_size
-        merge_size = model.config.vision_config.spatial_merge_size
-        llm_dim    = model.config.text_config.hidden_size
+        vjepa2           = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
+        vjepa_dim        = vjepa2.config.hidden_size
+        merge_size       = model.config.vision_config.spatial_merge_size
+        llm_dim          = model.config.text_config.hidden_size
+        patches_per_side = vjepa2.config.image_size // vjepa2.config.patch_size
 
         device = next(model.model.language_model.parameters()).device
         dtype  = next(model.model.language_model.parameters()).dtype
 
-        visual = VJEPA2VisualModule(vjepa2, vjepa_dim, merge_size, llm_dim).to(device=device, dtype=dtype)
+        visual = VJEPA2VisualModule(
+            vjepa2, vjepa_dim, merge_size, llm_dim,
+            patches_per_side=patches_per_side,
+        ).to(device=device, dtype=dtype)
 
         ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         if os.path.exists(ckpt_file):
@@ -167,20 +186,24 @@ class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
         model.config.vision_config.spatial_merge_size = 2
         model.model = Qwen3_5VJEPAInnerModel(model.config)
         model.model.load_state_dict(old_state, strict=True)
-        
+
         encoder, _ = torch.hub.load(
             'facebookresearch/vjepa2',
             cls.TORCH_HUB_NAME
         )
 
-        vjepa_dim  = encoder.img_mod_embed.shape[-1]
-        merge_size = model.config.vision_config.spatial_merge_size
-        llm_dim    = model.config.text_config.hidden_size
+        vjepa_dim        = encoder.img_mod_embed.shape[-1]
+        merge_size       = model.config.vision_config.spatial_merge_size
+        llm_dim          = model.config.text_config.hidden_size
+        patches_per_side = 384 // 16  # VJEPA2.1 전 변형 공통 (image_size=384, patch_size=16)
 
         device = next(model.model.language_model.parameters()).device
         dtype  = next(model.model.language_model.parameters()).dtype
 
-        visual = VJEPA2VisualModule(encoder, vjepa_dim, merge_size, llm_dim, is_v21=True).to(device=device, dtype=dtype)
+        visual = VJEPA2VisualModule(
+            encoder, vjepa_dim, merge_size, llm_dim, is_v21=True,
+            patches_per_side=patches_per_side,
+        ).to(device=device, dtype=dtype)
 
         ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         if os.path.exists(ckpt_file):
@@ -222,17 +245,43 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
     VISION_MODEL_ID = None
 
     def get_image_features(self, pixel_values, image_grid_thw, image_position_ids=None, **kwargs):
-        image_embeds = self.visual(pixel_values)  # [B, N, D]
         merge_size = self.config.vision_config.spatial_merge_size
-        results = []
+        pps        = self.visual.patches_per_side
+        ppt        = pps * pps
 
-        vid_idx = 0
-        offset = 0
+        image_embeds = self.visual(pixel_values)    # [total_items, patches, D]
+
+        results     = []
+        item_offset = 0
+        vid_offset  = 0
+
         for grid_idx in range(image_grid_thw.shape[0]):
             t, h, w = image_grid_thw[grid_idx].tolist()
-            n = t * h * w
 
-            embeds = image_embeds[vid_idx, offset:offset + n]
+            if t == 1:
+                n_tiles = (h * w) // ppt
+
+                if n_tiles == 1:
+                    embeds = image_embeds[item_offset]
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
+                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
+                    assembled = assembled.reshape(h, w, -1)
+                    embeds    = assembled.reshape(h * w, -1)
+
+                item_offset += n_tiles
+
+            else:
+                n      = t * h * w
+                embeds = image_embeds[item_offset, vid_offset:vid_offset + n]
+                vid_offset += n
+                if vid_offset >= image_embeds.shape[1]:
+                    item_offset += 1
+                    vid_offset   = 0
+
             embeds = embeds.view(t, h // merge_size, merge_size,
                                  w // merge_size, merge_size, -1)
             embeds = embeds.permute(0, 1, 3, 2, 4, 5)
@@ -241,11 +290,6 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
             embeds = embeds.to(self.visual.dtype)
             embeds = self.visual.merger(embeds)
             results.append(embeds)
-
-            offset += n
-            if offset >= image_embeds.shape[1]:
-                vid_idx += 1
-                offset = 0
 
         return BaseModelOutputWithPooling(pooler_output=tuple(results))
 
@@ -257,16 +301,20 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
         kwargs.setdefault("ignore_mismatched_sizes", True)
         model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
 
-        vjepa2    = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
-        vjepa_dim = vjepa2.config.hidden_size
+        vjepa2           = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
+        vjepa_dim        = vjepa2.config.hidden_size
         model.config.vision_config.spatial_merge_size = 2
-        merge_size = model.config.vision_config.spatial_merge_size
-        llm_dim    = model.config.text_config.hidden_size
+        merge_size       = model.config.vision_config.spatial_merge_size
+        llm_dim          = model.config.text_config.hidden_size
+        patches_per_side = vjepa2.config.image_size // vjepa2.config.patch_size
 
         device = next(model.model.language_model.parameters()).device
         dtype  = next(model.model.language_model.parameters()).dtype
 
-        visual = VJEPA2VisualModule(vjepa2, vjepa_dim, merge_size, llm_dim).to(device=device, dtype=dtype)
+        visual = VJEPA2VisualModule(
+            vjepa2, vjepa_dim, merge_size, llm_dim,
+            patches_per_side=patches_per_side,
+        ).to(device=device, dtype=dtype)
 
         # visual은 outer class에 직접 붙으므로 key prefix = "visual." (Qwen은 "model.visual.")
         ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
@@ -312,14 +360,18 @@ class Gemma4VJEPA21Model(Gemma4VJEPAModel):
             cls.TORCH_HUB_NAME
         )
 
-        vjepa_dim  = encoder.img_mod_embed.shape[-1]
-        merge_size = model.config.vision_config.spatial_merge_size
-        llm_dim    = model.config.text_config.hidden_size
+        vjepa_dim        = encoder.img_mod_embed.shape[-1]
+        merge_size       = model.config.vision_config.spatial_merge_size
+        llm_dim          = model.config.text_config.hidden_size
+        patches_per_side = 384 // 16  # VJEPA2.1 전 변형 공통 (image_size=384, patch_size=16)
 
         device = next(model.model.language_model.parameters()).device
         dtype  = next(model.model.language_model.parameters()).dtype
 
-        visual = VJEPA2VisualModule(encoder, vjepa_dim, merge_size, llm_dim, is_v21=True).to(device=device, dtype=dtype)
+        visual = VJEPA2VisualModule(
+            encoder, vjepa_dim, merge_size, llm_dim, is_v21=True,
+            patches_per_side=patches_per_side,
+        ).to(device=device, dtype=dtype)
 
         ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
         if os.path.exists(ckpt_file):
