@@ -18,7 +18,7 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
         image_grid_thw      = inputs.get('image_grid_thw')
         video_grid_thw      = inputs.get('video_grid_thw')
 
-        if pixel_values is not None:
+        if pixel_values is not None and image_grid_thw is not None:
             n_images = image_grid_thw.shape[0]
             pps      = base_model.model.visual.patches_per_side
             image_embeds_list = []
@@ -43,7 +43,7 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
             )
             inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
 
-        if pixel_values_videos is not None:
+        if pixel_values_videos is not None and video_grid_thw is not None:
             n_videos = video_grid_thw.shape[0]
             pps      = base_model.model.visual.patches_per_side
             video_embeds_list = []
@@ -91,7 +91,7 @@ class Gemma4VJEPATemplate(Gemma4Template):
         image_grid_thw      = inputs.get('image_grid_thw')
         video_grid_thw      = inputs.get('video_grid_thw')
 
-        if pixel_values is not None:
+        if pixel_values is not None and image_grid_thw is not None:
             n_images = image_grid_thw.shape[0]
             pps      = base_model.visual.patches_per_side
             image_embeds_list = []
@@ -116,7 +116,7 @@ class Gemma4VJEPATemplate(Gemma4Template):
                 image_mask.unsqueeze(-1).expand_as(inputs_embeds), image_embeds
             )
 
-        if pixel_values_videos is not None:
+        if pixel_values_videos is not None and video_grid_thw is not None:
             n_videos = video_grid_thw.shape[0]
             pps      = base_model.visual.patches_per_side
             video_embeds_list = []
@@ -143,5 +143,10 @@ class Gemma4VJEPATemplate(Gemma4Template):
         return {'inputs_embeds': inputs_embeds}
 
     def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
-        # Gemma4는 mrope 없음 — 부모가 mm_token_type_ids까지 처리하므로 그대로 위임
-        return super()._data_collator(batch, padding_to=padding_to)
+        result = super()._data_collator(batch, padding_to=padding_to)
+        # Gemma4의 부모 collator는 image_grid_thw / video_grid_thw를 수집하지 않으므로 직접 처리
+        for key in ('image_grid_thw', 'video_grid_thw'):
+            tensors = [item[key] for item in batch if item.get(key) is not None]
+            if tensors:
+                result[key] = torch.cat(tensors, dim=0)
+        return result
