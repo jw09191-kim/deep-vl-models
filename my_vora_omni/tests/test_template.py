@@ -474,12 +474,17 @@ class TestGemma4OOMFixCaching:
         fake_self, base_model = make_gemma4_mocks()
         base_model.model.config.text_config.hidden_size_per_layer_input = None
 
+        # MagicMock 은 존재하지 않는 속성도 hasattr()=True 를 반환하므로
+        # 일반 객체로 교체해서 실제로 setattr 됐는지 확인한다.
+        class _FakeLM:
+            pass
+        lm = _FakeLM()
+        base_model.model.language_model = lm
+
         inputs = {"input_ids": torch.zeros(1, SEQ_LEN, dtype=torch.long)}
         Gemma4VJEPATemplate._post_encode(fake_self, MagicMock(), inputs)
 
-        lm = base_model.model.language_model
-        assert not hasattr(lm, "_vjepa_llm_input_ids") or \
-               lm._vjepa_llm_input_ids is MagicMock(), \
+        assert not hasattr(lm, "_vjepa_llm_input_ids"), \
             "_vjepa_llm_input_ids 가 예기치 않게 설정되었습니다"
 
     def test_exception_in_oom_fix_does_not_propagate(self):
