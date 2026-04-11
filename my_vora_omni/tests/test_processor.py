@@ -423,3 +423,92 @@ class TestVideoProcessorOutput:
         assert (
             reported == formula
         ), f"{cls.__name__} T={T},h={h},w={w}: reported={reported}, formula={formula}"
+
+
+# ===========================================================================
+# 5. video_processor — T < tubelet_size 경계 조건 (패딩 검증)
+#    T=1 또는 T 가 tubelet_size 의 배수가 아닐 때 grid_t=0 이 되어
+#    [0, ...] 형태의 텐서가 생성되고 채널 차원 판별 워닝이 발생하는 버그 검증.
+#    VJEPAVideoProcessor._preprocess() 에서 마지막 프레임 반복 패딩으로 수정.
+# ===========================================================================
+
+
+class TestVideoProcessorTubeletPadding:
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Qwen3VLVJepa2LProcessor,
+            Qwen3VLVJepa21BProcessor,
+            Gemma4VJepa2LProcessor,
+            Gemma4VJEPA21BProcessor,
+        ],
+    )
+    def test_T1_padded_to_tubelet_size(self, cls):
+        """T=1 → 마지막 프레임 반복 패딩 → grid_t=1, 토큰 > 0."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+        out = run_video(proc, make_video_tensor(1, sz, sz))
+
+        grid_t = out["video_grid_thw"][0, 0].item()
+        assert grid_t == 1, \
+            f"{cls.__name__} T=1: grid_t={grid_t} (expected 1, got 0 before fix)"
+        assert out["num_soft_tokens_per_video"][0] > 0, \
+            f"{cls.__name__} T=1: num_soft_tokens_per_video must be > 0"
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Qwen3VLVJepa2LProcessor,
+            Qwen3VLVJepa21BProcessor,
+        ],
+    )
+    def test_T_not_multiple_of_tubelet(self, cls):
+        """T=3 (tubelet_size=2) → 패딩 후 T=4, grid_t=2."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+        out = run_video(proc, make_video_tensor(3, sz, sz))
+
+        grid_t = out["video_grid_thw"][0, 0].item()
+        assert grid_t == 2, \
+            f"{cls.__name__} T=3: grid_t={grid_t} (expected 2 after padding to T=4)"
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Qwen3VLVJepa2LProcessor,
+            Qwen3VLVJepa21BProcessor,
+        ],
+    )
+    def test_padded_frame_repeats_last(self, cls):
+        """패딩된 프레임이 원본 마지막 프레임의 복제인지 확인."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+
+        vid = make_video_tensor(1, sz, sz)
+        vid[0] = 200.0  # 유일한 프레임을 특정 값으로 설정
+        out = run_video(proc, vid)
+
+        pv = out["pixel_values_videos"]  # [1, T_padded, C, H, W]
+        assert pv.shape[1] == 2, \
+            f"{cls.__name__}: T=1 이후 패딩 시 temporal dim이 2여야 함 (got {pv.shape[1]})"
+        assert torch.allclose(pv[0, 0], pv[0, 1]), \
+            f"{cls.__name__}: 패딩된 프레임(T=1)이 원본 프레임(T=0)과 동일해야 함"
+
+    @pytest.mark.parametrize(
+        "cls",
+        [
+            Qwen3VLVJepa2LProcessor,
+            Qwen3VLVJepa21BProcessor,
+        ],
+    )
+    def test_even_T_unchanged(self, cls):
+        """T=4 (tubelet_size의 배수) → 패딩 없이 그대로 처리."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+        out = run_video(proc, make_video_tensor(4, sz, sz))
+
+        pv = out["pixel_values_videos"]
+        assert pv.shape[1] == 4, \
+            f"{cls.__name__} T=4: temporal dim이 변경되면 안 됨 (got {pv.shape[1]})"
+        assert out["video_grid_thw"][0, 0].item() == 2

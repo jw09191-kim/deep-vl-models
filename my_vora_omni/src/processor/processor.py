@@ -175,6 +175,14 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         for vid in videos:
             # vid: [T, C, H, W]
             T, C, orig_h, orig_w = vid.shape
+
+            # T 가 tubelet_size 의 배수가 아니면 마지막 프레임으로 패딩
+            # (grid_t = T // tubelet_size = 0 이 되는 것을 방지)
+            if T % self.tubelet_size != 0:
+                pad = self.tubelet_size - (T % self.tubelet_size)
+                vid = torch.cat([vid, vid[-1:].expand(pad, -1, -1, -1)], dim=0)
+                T = vid.shape[0]
+
             n_rows, n_cols = _select_tile_layout(orig_h, orig_w, max_tiles)
             n_tiles = n_rows * n_cols
 
