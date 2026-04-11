@@ -7,6 +7,33 @@ from transformers import AutoModel, Qwen3_5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
 from transformers import Gemma4ForConditionalGeneration
+from transformers.models.gemma4.modeling_gemma4 import Gemma4TextModel
+
+
+# ──────────────────────────────────────────────
+# Gemma4 per_layer_inputs OOM fix
+#
+# When Swift's pre_forward_hook returns {'inputs_embeds': ...}, it removes input_ids.
+# Gemma4's get_per_layer_inputs(input_ids=None, inputs_embeds) then tries to recover
+# input_ids via a [batch, seq_len, vocab_size, hidden_dim] boolean comparison → OOM.
+#
+# Fix: if _vjepa_llm_input_ids was pre-computed and stored on the language model by
+# Gemma4VJEPATemplate._post_encode, use it directly. Otherwise fall back to PAD tokens.
+# ──────────────────────────────────────────────
+_gemma4_orig_get_per_layer_inputs = Gemma4TextModel.get_per_layer_inputs
+
+def _gemma4_safe_get_per_layer_inputs(self, input_ids, inputs_embeds):
+    if input_ids is None:
+        if hasattr(self, '_vjepa_llm_input_ids'):
+            input_ids = self._vjepa_llm_input_ids
+            del self._vjepa_llm_input_ids
+        elif inputs_embeds is not None:
+            pad_id = getattr(self.config, 'pad_token_id', 0)
+            batch, seq_len = inputs_embeds.shape[:2]
+            input_ids = inputs_embeds.new_full((batch, seq_len), pad_id, dtype=torch.long)
+    return _gemma4_orig_get_per_layer_inputs(self, input_ids, inputs_embeds)
+
+Gemma4TextModel.get_per_layer_inputs = _gemma4_safe_get_per_layer_inputs
 
 
 class Qwen3_5VJEPAInnerModel(Qwen3_5Model):

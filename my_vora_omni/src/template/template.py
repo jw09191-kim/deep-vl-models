@@ -91,6 +91,23 @@ class Gemma4VJEPATemplate(Gemma4Template):
         image_grid_thw      = inputs.get('image_grid_thw')
         video_grid_thw      = inputs.get('video_grid_thw')
 
+        # Gemma4's forward calls get_per_layer_inputs(llm_input_ids, ...) to compute
+        # per-layer conditioning embeddings. Swift removes input_ids when inputs_embeds
+        # is returned, so get_per_layer_inputs would receive input_ids=None and trigger
+        # an expensive [batch, seq_len, vocab_size, hidden_dim] reverse lookup → OOM.
+        # Pre-compute llm_input_ids here (multimodal positions replaced by PAD) and
+        # cache it on the language model for the patched get_per_layer_inputs to use.
+        try:
+            text_cfg = base_model.model.config.text_config
+            if getattr(text_cfg, 'hidden_size_per_layer_input', None):
+                image_mask_2d, video_mask_2d, audio_mask_2d = base_model.model.get_placeholder_mask(input_ids)
+                multimodal_mask = image_mask_2d | video_mask_2d | audio_mask_2d
+                llm_input_ids = input_ids.clone()
+                llm_input_ids[multimodal_mask] = text_cfg.pad_token_id
+                base_model.model.language_model._vjepa_llm_input_ids = llm_input_ids
+        except Exception:
+            pass  # patched get_per_layer_inputs falls back to PAD IDs
+
         if pixel_values is not None and image_grid_thw is not None:
             n_images = image_grid_thw.shape[0]
             pps      = base_model.visual.patches_per_side
