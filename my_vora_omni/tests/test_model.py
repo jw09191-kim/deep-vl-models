@@ -327,6 +327,10 @@ class TestGetVideoFeatures:
     LLM_DIM = 32
 
     def _call_video(self, fake_model, n_tiles: int, t: int, grid_thw: list[list[int]]):
+        # get_video_features 는 self.get_image_features 를 호출하므로 주입 필요
+        fake_model.get_image_features = lambda pv, grid, **kw: \
+            Qwen3_5VJEPAInnerModel.get_image_features(fake_model, pv, grid, **kw)
+
         pps = self.PPS
         enc_out = encoder_output(n_tiles, t * pps * pps, self.VJEPA_DIM)
         fake_model.visual.set_encoder_output(enc_out)
@@ -375,8 +379,10 @@ class TestGetVideoFeatures:
         grid = torch.tensor(grid_thw, dtype=torch.long)
         dummy_pv = torch.zeros(1, 1)
 
-        # 동일 가중치 재현을 위해 같은 visual 공유
+        # 동일 가중치 재현을 위해 같은 visual 공유, get_image_features 주입
         fake2 = types.SimpleNamespace(config=fake1.config, visual=fake1.visual)
+        fake2.get_image_features = lambda pv, g, **kw: \
+            Qwen3_5VJEPAInnerModel.get_image_features(fake2, pv, g, **kw)
 
         res_img = Qwen3_5VJEPAInnerModel.get_image_features(fake1, dummy_pv, grid)
         fake1.visual.set_encoder_output(enc_out)
