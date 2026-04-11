@@ -48,6 +48,13 @@ MERGE = VoRAVisionConfig.MERGE_SIZE  # 2
 # 헬퍼
 # ---------------------------------------------------------------------------
 
+def as_list(x) -> list:
+    """tensor / list 모두 Python list 로 변환. return_tensors='pt' 시 tensor로 반환되는 필드에 사용."""
+    if isinstance(x, torch.Tensor):
+        return x.tolist()
+    return list(x)
+
+
 def make_pil(h: int, w: int, fill: int = 128) -> Image.Image:
     return Image.fromarray(np.full((h, w, 3), fill, dtype=np.uint8))
 
