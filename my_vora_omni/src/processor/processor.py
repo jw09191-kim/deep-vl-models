@@ -271,18 +271,24 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
         image_processor = VJEPAImageProcessor(self.VISION_MODEL_ID)
         video_processor = VJEPAVideoProcessor(self.VISION_MODEL_ID)
 
-        super().__init__(
+        # Only forward chat_template when explicitly provided.
+        # Passing None overrides the parent class's built-in default template
+        # (which exists in Gemma4Processor even for base models).
+        init_kwargs = dict(
             feature_extractor=feature_extractor,
             image_processor=image_processor,
             tokenizer=tokenizer,
             video_processor=video_processor,
-            chat_template=chat_template,
             image_seq_length=image_seq_length,
             **kwargs,
         )
-        # If no chat_template was saved in the checkpoint, inherit from the tokenizer.
-        # ProcessorMixin.apply_chat_template raises when self.chat_template is None,
-        # but the tokenizer loaded from the base Gemma4 model always has one.
+        if chat_template is not None:
+            init_kwargs["chat_template"] = chat_template
+        super().__init__(**init_kwargs)
+
+        # Secondary fallback: inherit from tokenizer if still missing
+        # (e.g. loaded from a VoRA checkpoint where both processor and
+        # tokenizer configs were saved without the template).
         if self.chat_template is None and hasattr(self, 'tokenizer'):
             self.chat_template = getattr(self.tokenizer, 'chat_template', None)
 
