@@ -263,10 +263,17 @@ class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
 
         # from_pretrained() above creates a plain Qwen3_5ForConditionalGeneration
         # instance (not cls), so the _validate_model_kwargs override from
-        # Qwen3_5VJEPAModel is absent. Bind it directly to the returned object.
+        # Qwen3_5VJEPAModel is absent. Bind a standalone version that avoids
+        # super() — which would fail because self is not a Qwen3_5VJEPAModel.
         import types
+
+        def _patched_validate_model_kwargs(self, model_kwargs):
+            model_kwargs.pop("num_soft_tokens_per_image", None)
+            model_kwargs.pop("num_soft_tokens_per_video", None)
+            Qwen3_5ForConditionalGeneration._validate_model_kwargs(self, model_kwargs)
+
         model._validate_model_kwargs = types.MethodType(
-            Qwen3_5VJEPAModel._validate_model_kwargs, model
+            _patched_validate_model_kwargs, model
         )
 
         target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
