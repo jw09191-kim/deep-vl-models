@@ -37,11 +37,18 @@ sys.path.insert(0, str(PROJECT_ROOT))
 # Model / Processor registry
 # ─────────────────────────────────────────────
 REGISTRY = {
-    "vitl":     ("Qwen3VLVJepa2LProcessor",  "Qwen3_5VJEPALModel"),
-    "vitg":     ("Qwen3VLVJepa2GProcessor",  "Qwen3_5VJEPAGModel"),
-    "vjepa21b": ("Qwen3VLVJepa21BProcessor", "Qwen3_5VJEPA21BModel"),
-    "vjepa21l": ("Qwen3VLVJepa21LProcessor", "Qwen3_5VJEPA21LModel"),
-    "vjepa21g": ("Qwen3VLVJepa21GProcessor", "Qwen3_5VJEPA21GModel"),
+    # Qwen3.5 + VJEPA2
+    "vitl":        ("Qwen3VLVJepa2LProcessor",  "Qwen3_5VJEPALModel"),
+    "vitg":        ("Qwen3VLVJepa2GProcessor",  "Qwen3_5VJEPAGModel"),
+    "vjepa21b":    ("Qwen3VLVJepa21BProcessor", "Qwen3_5VJEPA21BModel"),
+    "vjepa21l":    ("Qwen3VLVJepa21LProcessor", "Qwen3_5VJEPA21LModel"),
+    "vjepa21g":    ("Qwen3VLVJepa21GProcessor", "Qwen3_5VJEPA21GModel"),
+    # Gemma4 + VJEPA2
+    "g4-vitl":     ("Gemma4VJepa2LProcessor",   "Gemma4VJEPALModel"),
+    "g4-vitg":     ("Gemma4VJepa2GProcessor",   "Gemma4VJEPAGModel"),
+    "g4-vjepa21b": ("Gemma4VJEPA21BProcessor",  "Gemma4VJEPA21BModel"),
+    "g4-vjepa21l": ("Gemma4VJEPA21LProcessor",  "Gemma4VJEPA21LModel"),
+    "g4-vjepa21g": ("Gemma4VJEPA21GProcessor",  "Gemma4VJEPA21GModel"),
 }
 
 ANSWER_RE = re.compile(r'\b([A-D])\b')
@@ -256,18 +263,28 @@ def load_videomme_local(json_path: str):
 # ─────────────────────────────────────────────
 def load_model_and_processor(model_path: str, model_type: str, device: str):
     PROC_MAP = {
-        "vitl":     Qwen3VLVJepa2LProcessor,
-        "vitg":     Qwen3VLVJepa2GProcessor,
-        "vjepa21b": Qwen3VLVJepa21BProcessor,
-        "vjepa21l": Qwen3VLVJepa21LProcessor,
-        "vjepa21g": Qwen3VLVJepa21GProcessor,
+        "vitl":        Qwen3VLVJepa2LProcessor,
+        "vitg":        Qwen3VLVJepa2GProcessor,
+        "vjepa21b":    Qwen3VLVJepa21BProcessor,
+        "vjepa21l":    Qwen3VLVJepa21LProcessor,
+        "vjepa21g":    Qwen3VLVJepa21GProcessor,
+        "g4-vitl":     Gemma4VJepa2LProcessor,
+        "g4-vitg":     Gemma4VJepa2GProcessor,
+        "g4-vjepa21b": Gemma4VJEPA21BProcessor,
+        "g4-vjepa21l": Gemma4VJEPA21LProcessor,
+        "g4-vjepa21g": Gemma4VJEPA21GProcessor,
     }
     MODEL_MAP = {
-        "vitl":     Qwen3_5VJEPALModel,
-        "vitg":     Qwen3_5VJEPAGModel,
-        "vjepa21b": Qwen3_5VJEPA21BModel,
-        "vjepa21l": Qwen3_5VJEPA21LModel,
-        "vjepa21g": Qwen3_5VJEPA21GModel,
+        "vitl":        Qwen3_5VJEPALModel,
+        "vitg":        Qwen3_5VJEPAGModel,
+        "vjepa21b":    Qwen3_5VJEPA21BModel,
+        "vjepa21l":    Qwen3_5VJEPA21LModel,
+        "vjepa21g":    Qwen3_5VJEPA21GModel,
+        "g4-vitl":     Gemma4VJEPALModel,
+        "g4-vitg":     Gemma4VJEPAGModel,
+        "g4-vjepa21b": Gemma4VJEPA21BModel,
+        "g4-vjepa21l": Gemma4VJEPA21LModel,
+        "g4-vjepa21g": Gemma4VJEPA21GModel,
     }
 
     proc_cls  = PROC_MAP[model_type]

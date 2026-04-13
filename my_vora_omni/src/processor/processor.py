@@ -280,6 +280,11 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
             image_seq_length=image_seq_length,
             **kwargs,
         )
+        # If no chat_template was saved in the checkpoint, inherit from the tokenizer.
+        # ProcessorMixin.apply_chat_template raises when self.chat_template is None,
+        # but the tokenizer loaded from the base Gemma4 model always has one.
+        if self.chat_template is None and hasattr(self, 'tokenizer'):
+            self.chat_template = getattr(self.tokenizer, 'chat_template', None)
 
 
 class Gemma4VJepa2LProcessor(Gemma4VJEPAProcessor):
