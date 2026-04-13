@@ -67,7 +67,45 @@ def sample_frames_decord(video_path: str, num_frames: int) -> np.ndarray:
     total = len(vr)
     indices = np.linspace(0, total - 1, num_frames, dtype=int)
     frames = vr.get_batch(indices).numpy()  # [T, H, W, C]  uint8
-    return frames.astype(np.float32)
+    frames = frames.astype(np.float32)
+    # AV1 decode failures (e.g. missing HW accel) return silent zero frames.
+    if frames.max() < 1.0:
+        raise ValueError("decord returned blank frames — possible AV1 decode failure")
+    return frames
+
+
+def sample_frames_pyav(video_path: str, num_frames: int) -> np.ndarray:
+    """PyAV-based frame extraction; handles AV1 via FFmpeg software decoding."""
+    import av
+
+    with av.open(video_path) as container:
+        stream = container.streams.video[0]
+
+        # Duration in seconds (AV_TIME_BASE = 1 000 000 µs)
+        if container.duration:
+            duration_sec = container.duration / 1_000_000
+        elif stream.duration and stream.time_base:
+            duration_sec = float(stream.duration * stream.time_base)
+        else:
+            duration_sec = 60.0
+
+        timestamps_sec = np.linspace(0, duration_sec * 0.99, num_frames)
+        frames_out = []
+
+        for ts in timestamps_sec:
+            container.seek(int(ts * 1_000_000), backward=True, any_frame=False)
+            for frame in container.decode(stream):
+                frames_out.append(frame.to_ndarray(format="rgb24").astype(np.float32))
+                break  # one frame per seek point
+
+    if not frames_out:
+        raise ValueError("PyAV extracted no frames")
+
+    # Pad to requested count if seeks came up short
+    while len(frames_out) < num_frames:
+        frames_out.append(frames_out[-1])
+
+    return np.stack(frames_out[:num_frames])  # [T, H, W, C]
 
 
 def sample_frames_cv2(video_path: str, num_frames: int) -> np.ndarray:
@@ -90,10 +128,13 @@ def sample_frames_cv2(video_path: str, num_frames: int) -> np.ndarray:
 
 
 def sample_frames(video_path: str, num_frames: int) -> np.ndarray:
-    try:
-        return sample_frames_decord(video_path, num_frames)
-    except Exception:
-        return sample_frames_cv2(video_path, num_frames)
+    """Try decoders in order: decord → PyAV → cv2."""
+    for decoder in (sample_frames_decord, sample_frames_pyav, sample_frames_cv2):
+        try:
+            return decoder(video_path, num_frames)
+        except Exception:
+            continue
+    raise RuntimeError(f"All video decoders failed for: {video_path}")
 
 
 # ─────────────────────────────────────────────
