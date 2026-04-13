@@ -261,6 +261,14 @@ class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
 
         model.model.visual = visual
 
+        # from_pretrained() above creates a plain Qwen3_5ForConditionalGeneration
+        # instance (not cls), so the _validate_model_kwargs override from
+        # Qwen3_5VJEPAModel is absent. Bind it directly to the returned object.
+        import types
+        model._validate_model_kwargs = types.MethodType(
+            Qwen3_5VJEPAModel._validate_model_kwargs, model
+        )
+
         target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(target_device)
         return model

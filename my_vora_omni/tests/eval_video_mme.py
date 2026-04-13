@@ -322,8 +322,10 @@ def run_inference(model, processor, video_tensor: torch.Tensor, question_text: s
         return_tensors="pt",
         padding=True,
     )
-    inputs = {k: v.to(device) if isinstance(v, torch.Tensor) else v
-              for k, v in inputs.items()}
+    # num_soft_tokens_* are training-only metadata; strip them before generate()
+    _TRAINING_ONLY_KEYS = {"num_soft_tokens_per_image", "num_soft_tokens_per_video"}
+    inputs = {k: (v.to(device) if isinstance(v, torch.Tensor) else v)
+              for k, v in inputs.items() if k not in _TRAINING_ONLY_KEYS}
 
     generated_ids = model.generate(
         **inputs,
