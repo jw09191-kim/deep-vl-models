@@ -21,13 +21,17 @@ def _is_frame_list(video) -> bool:
 
 
 def _load_frames_as_tensor(frame_paths: List[str]) -> torch.Tensor:
-    """이미지 파일 목록 → (T, C, H, W) float32 [0, 1] 텐서."""
+    """이미지 파일 목록 → (T, C, H, W) uint8 [0, 255] 텐서.
+
+    torchcodec 디코딩 결과와 동일한 포맷으로 반환한다.
+    비디오 프로세서는 do_rescale=True (×1/255)를 적용하므로
+    float [0, 1]로 반환하면 값이 0에 수렴하는 버그가 발생한다.
+    """
     frames = [
-        torch.from_numpy(np.array(Image.open(p).convert('RGB')))
-        .permute(2, 0, 1).float() / 255.0
+        torch.from_numpy(np.array(Image.open(p).convert('RGB'))).permute(2, 0, 1)
         for p in frame_paths
     ]
-    return torch.stack(frames)  # (T, C, H, W)
+    return torch.stack(frames)  # (T, C, H, W) uint8
 
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):
