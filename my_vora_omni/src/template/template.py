@@ -11,27 +11,32 @@ _IMAGE_EXTS = frozenset(('jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tiff', 'ti
 
 
 def _is_frame_list(video) -> bool:
-    """video가 이미지 파일 경로 목록(프레임 기반 비디오)이면 True."""
-    return (
-        isinstance(video, (list, tuple))
-        and len(video) > 0
-        and all(isinstance(p, str) and p.rsplit('.', 1)[-1].lower() in _IMAGE_EXTS
-                for p in video)
-    )
+    """video가 이미지 파일 경로 목록 또는 PIL Image 목록(프레임 기반 비디오)이면 True."""
+    if not isinstance(video, (list, tuple)) or len(video) == 0:
+        return False
+    first = video[0]
+    if isinstance(first, str):
+        return all(isinstance(p, str) and p.rsplit('.', 1)[-1].lower() in _IMAGE_EXTS
+                   for p in video)
+    # PIL Image 목록 지원: Swift가 프레임을 PIL로 전달하는 경우
+    return isinstance(first, Image.Image)
 
 
-def _load_frames_as_tensor(frame_paths: List[str]) -> torch.Tensor:
-    """이미지 파일 목록 → (T, C, H, W) uint8 [0, 255] 텐서.
+def _load_frames_as_tensor(frames) -> torch.Tensor:
+    """이미지 파일 경로 목록 또는 PIL Image 목록 → (T, C, H, W) uint8 [0, 255] 텐서.
 
     torchcodec 디코딩 결과와 동일한 포맷으로 반환한다.
     비디오 프로세서는 do_rescale=True (×1/255)를 적용하므로
     float [0, 1]로 반환하면 값이 0에 수렴하는 버그가 발생한다.
     """
-    frames = [
-        torch.from_numpy(np.array(Image.open(p).convert('RGB'))).permute(2, 0, 1)
-        for p in frame_paths
-    ]
-    return torch.stack(frames)  # (T, C, H, W) uint8
+    result = []
+    for f in frames:
+        if isinstance(f, str):
+            f = Image.open(f).convert('RGB')
+        elif isinstance(f, Image.Image):
+            f = f.convert('RGB')
+        result.append(torch.from_numpy(np.array(f)).permute(2, 0, 1))
+    return torch.stack(result)  # (T, C, H, W) uint8
 
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):

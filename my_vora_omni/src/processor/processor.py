@@ -518,6 +518,35 @@ class Gemma4VJEPAVideoProcessor(Gemma4VideoProcessor):
         max_frames = (max_frames // self.tubelet_size) * self.tubelet_size
         self.num_frames = max(self.tubelet_size, max_frames)
 
+    def preprocess(self, videos, **kwargs):
+        """이미지 리스트(PIL Image / str 경로)를 [T, C, H, W] uint8 텐서로 변환 후 super().preprocess()를 호출한다.
+
+        HF BaseVideoProcessor._decode_and_sample_videos는 list-of-images 입력을 감지하면
+        do_sample_frames=True(기본값)일 때 ValueError를 발생시킨다:
+          "Sampling frames from a list of images is not supported!"
+        텐서로 미리 변환하여 tensor 처리 경로(Scenario 1)로 우회한다.
+        """
+        import numpy as np
+        from PIL import Image as _PILImage
+        from transformers.video_processing_utils import make_batched_videos
+
+        batched = make_batched_videos(videos)
+        converted = []
+        for v in batched:
+            if isinstance(v, (list, tuple)):
+                frames = []
+                for img in v:
+                    if isinstance(img, str):
+                        img = _PILImage.open(img).convert('RGB')
+                    elif hasattr(img, 'convert'):  # PIL Image
+                        img = img.convert('RGB')
+                    if not isinstance(img, torch.Tensor):
+                        img = torch.from_numpy(np.array(img)).permute(2, 0, 1)
+                    frames.append(img)
+                v = torch.stack(frames)  # [T, C, H, W] uint8
+            converted.append(v)
+        return super().preprocess(converted, **kwargs)
+
     def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
         total = metadata.total_num_frames
         # 일부 base class는 num_frames > total_num_frames일 때 ValueError를 raise한다.
