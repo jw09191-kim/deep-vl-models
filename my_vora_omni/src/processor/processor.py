@@ -159,6 +159,37 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
 
+    def fetch_videos(self, video_url_or_urls, sample_indices_fn=None, **kwargs):
+        # BaseVideoProcessor.fetch_videos hardcodes backend="torchcodec".
+        # pyav handles over-reported frame counts, but reads total_frames=0 on
+        # some files (under-reported metadata) → empty indices → IndexError.
+        # decord counts frames by seeking and is the most robust final fallback.
+        if isinstance(video_url_or_urls, (list, tuple)):
+            return list(zip(*[
+                self.fetch_videos(x, sample_indices_fn=sample_indices_fn)
+                for x in video_url_or_urls
+            ]))
+        from transformers.video_utils import load_video
+        try:
+            return load_video(video_url_or_urls, backend="pyav",
+                              sample_indices_fn=sample_indices_fn)
+        except (IndexError, RuntimeError):
+            return self._load_video_decord(video_url_or_urls)
+
+    def _load_video_decord(self, video_path):
+        import numpy as np
+        import decord
+        decord.bridge.set_bridge("torch")
+        vr = decord.VideoReader(video_path, ctx=decord.cpu(0), num_threads=2)
+        total = len(vr)
+        if total == 0:
+            raise RuntimeError(f"Video has no decodeable frames: {video_path}")
+        n = min(self.max_frames, total)
+        indices = np.linspace(0, total - 1, n, dtype=int)
+        frames = vr.get_batch(indices).numpy()   # [T, H, W, C] uint8
+        fps = float(vr.get_avg_fps()) or 1.0
+        return frames, {"fps": fps, "num_frames": total}
+
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
         merge          = getattr(self, 'merge_size', 2)
