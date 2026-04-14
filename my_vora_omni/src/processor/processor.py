@@ -14,6 +14,23 @@ from transformers.image_processing_utils_fast import group_images_by_shape, reor
 import torch
 
 
+class _VideoMeta(dict):
+    """Metadata dict that also supports attribute-style access (meta.fps as well as meta["fps"]).
+
+    Transformers' internal code uses both styles depending on the version, so we
+    support both to avoid AttributeError when our custom image-frame loader returns
+    metadata that is later accessed as an object attribute.
+    """
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
 VJEPA21_CONFIGS = {
     "vjepa2_1_vit_base_384":    dict(image_size=384, patch_size=16, tubelet_size=2, hidden_size=768),
     "vjepa2_1_vit_large_384":   dict(image_size=384, patch_size=16, tubelet_size=2, hidden_size=1024),
@@ -239,13 +256,32 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
 
         if sample_indices_fn is not None:
             indices = sample_indices_fn(len(frames))
-            video_np = video_np[indices]
+            # Ensure indices is a plain numpy array (sample_indices_fn may return torch.Tensor)
+            if hasattr(indices, 'numpy'):
+                indices = indices.cpu().numpy()
+            video_np = video_np[np.asarray(indices)]
 
         # [T, H, W, C] → [T, C, H, W] to match torchcodec output
-        video_tensor = torch.from_numpy(video_np).permute(0, 3, 1, 2).contiguous()
+        video_tensor = torch.from_numpy(np.ascontiguousarray(video_np.transpose(0, 3, 1, 2)))
         T = video_tensor.shape[0]
-        metadata = {"fps": 1.0, "duration": float(T), "num_frames": T}
+        # Use an attribute-accessible object so both meta["fps"] and meta.fps work
+        metadata = _VideoMeta(fps=1.0, duration=float(T), num_frames=T, total_num_frames=T)
         return video_tensor, metadata
+
+    def preprocess(self, videos, **kwargs):
+        """Wrapper to surface the real error instead of Swift's opaque retry message."""
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        try:
+            return super().preprocess(videos, **kwargs)
+        except Exception as e:
+            logger.error(
+                "[VJEPAVideoProcessor] preprocess failed for videos=%r\n%s",
+                videos,
+                traceback.format_exc(),
+            )
+            raise
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
