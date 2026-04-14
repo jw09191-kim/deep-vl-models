@@ -48,6 +48,21 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
 class Gemma4VJEPATemplate(Gemma4Template):
 
     def _encode(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
+        import traceback as _tb
+        try:
+            return self._encode_impl(inputs)
+        except Exception as _e:
+            print(f"\n[Gemma4VJEPATemplate._encode] EXCEPTION: {type(_e).__name__}: {_e}")
+            print(f"  inputs.videos type  : {type(inputs.videos)}")
+            print(f"  inputs.videos len   : {len(inputs.videos) if inputs.videos else 0}")
+            if inputs.videos:
+                v0 = inputs.videos[0]
+                print(f"  inputs.videos[0] type : {type(v0)}")
+                print(f"  inputs.videos[0] value: {v0!r:.200}")
+            _tb.print_exc()
+            raise
+
+    def _encode_impl(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
         # Gemma4Template._encode()의 whitelist에 image_grid_thw / video_grid_thw가 없어
         # _post_encode (또는 model.forward)에 전달되지 않는 문제를 해결한다.
         # 부모의 super(Gemma4Template, self)._encode()로 텍스트 인코딩을 얻고,
