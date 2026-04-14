@@ -1,9 +1,33 @@
+import numpy as np
 import torch
+from PIL import Image
 from typing import Any, Dict, List, Optional
 from swift.template.templates.qwen import Qwen3_5Template
 from swift.template.templates.gemma import Gemma4Template
 from swift.template.template_inputs import StdTemplateInputs
 from swift.template.utils import findall
+
+_IMAGE_EXTS = frozenset(('jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tiff', 'tif'))
+
+
+def _is_frame_list(video) -> bool:
+    """video가 이미지 파일 경로 목록(프레임 기반 비디오)이면 True."""
+    return (
+        isinstance(video, (list, tuple))
+        and len(video) > 0
+        and all(isinstance(p, str) and p.rsplit('.', 1)[-1].lower() in _IMAGE_EXTS
+                for p in video)
+    )
+
+
+def _load_frames_as_tensor(frame_paths: List[str]) -> torch.Tensor:
+    """이미지 파일 목록 → (T, C, H, W) float32 [0, 1] 텐서."""
+    frames = [
+        torch.from_numpy(np.array(Image.open(p).convert('RGB')))
+        .permute(2, 0, 1).float() / 255.0
+        for p in frame_paths
+    ]
+    return torch.stack(frames)  # (T, C, H, W)
 
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):
@@ -26,6 +50,16 @@ class Gemma4VJEPATemplate(Gemma4Template):
         # processor를 1회 호출해 모든 미디어 키(grid_thw 포함)를 encoded에 복사한다.
         encoded = super(Gemma4Template, self)._encode(inputs)
 
+        # Gemma4VideoProcessor는 HF torchcodec 파이프라인을 사용하므로
+        # Qwen3VL 호환 포맷(이미지 파일 목록 = 프레임 기반 비디오)을 지원하지 않는다.
+        # inputs.videos 원소가 프레임 경로 리스트이면 (T, C, H, W) 텐서로 변환한다.
+        videos_for_processor = None
+        if inputs.videos:
+            videos_for_processor = [
+                _load_frames_as_tensor(v) if _is_frame_list(v) else v
+                for v in inputs.videos
+            ]
+
         split_token = self._tokenize('\n')
         media_inputs = self.processor(
             text='\n'.join(
@@ -35,7 +69,7 @@ class Gemma4VJEPATemplate(Gemma4Template):
             ),
             audio=inputs.audios or None,
             images=inputs.images or None,
-            videos=inputs.videos or None,
+            videos=videos_for_processor,
             return_tensors='pt',
             add_special_tokens=False,
         )

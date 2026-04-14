@@ -194,10 +194,14 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
 
     def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
+        total = metadata.total_num_frames
+        # 일부 base class는 num_frames > total_num_frames일 때 ValueError를 raise한다.
+        # 손상/짧은 비디오를 graceful하게 처리하기 위해 super() 호출 전에 클램핑
+        if num_frames is not None and num_frames > total:
+            num_frames = max(1, total)
         indices = super().sample_frames(metadata, num_frames=num_frames, fps=fps, **kwargs)
-        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우
-        # (duration * fps 부동소수점 반올림)를 방어하기 위해 상한을 total_num_frames - 2로 클램핑
-        return indices.clip(0, max(0, metadata.total_num_frames - 2))
+        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우 방어
+        return indices.clip(0, max(0, total - 2))
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles = int(os.environ.get("VIDEO_MAX_TILES", "4"))
@@ -515,10 +519,14 @@ class Gemma4VJEPAVideoProcessor(Gemma4VideoProcessor):
         self.num_frames = max(self.tubelet_size, max_frames)
 
     def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
+        total = metadata.total_num_frames
+        # 일부 base class는 num_frames > total_num_frames일 때 ValueError를 raise한다.
+        # 손상/짧은 비디오를 graceful하게 처리하기 위해 super() 호출 전에 클램핑
+        if num_frames is not None and num_frames > total:
+            num_frames = max(1, total)
         indices = super().sample_frames(metadata, num_frames=num_frames, fps=fps, **kwargs)
-        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우
-        # (duration * fps 부동소수점 반올림)를 방어하기 위해 상한을 total_num_frames - 2로 클램핑
-        return indices.clip(0, max(0, metadata.total_num_frames - 2))
+        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우 방어
+        return indices.clip(0, max(0, total - 2))
 
     def _preprocess(self, videos, **kwargs):
         return _vjepa_video_preprocess(self, videos, **kwargs)
