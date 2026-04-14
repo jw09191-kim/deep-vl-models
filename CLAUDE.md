@@ -96,3 +96,27 @@ Input files for training/inference follow this schema:
 | `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` | GPU memory management |
 
 Training uses DeepSpeed ZeRO-2 and Flash-Attention. `OMP_NUM_THREADS` and `MKL_NUM_THREADS` are set to `1` in scripts.
+
+## Known Issues
+
+### Gemma4 비디오 입력 시 채널 차원 워닝 (미해결)
+
+**발생 조건**: Gemma4 모델 변형(`Gemma4VJEPA*`)으로 비디오 추론 시
+
+**워닝 메시지**:
+```
+The channel dimension is ambiguous. Got image shape torch.Size([0, 3, 1, 1]).
+Assuming channels are the first dimension.
+```
+
+**원인 분석**:
+- `VJEPAVideoProcessor._preprocess()`에서 `T < tubelet_size`일 때 `grid_t = T // tubelet_size = 0`이 되어 `[0, ...]` 텐서가 생성됨
+- `VJEPAVideoProcessor._preprocess()`의 T 패딩 수정(`T % tubelet_size != 0`이면 마지막 프레임 반복)으로 직접 호출 경로는 수정됨
+- **그러나 워닝이 여전히 발생**: `Gemma4VJEPATemplate._post_encode()` 또는 부모 클래스 `Qwen3VLVideoProcessor.__call__()`이 프레임을 개별 이미지로 처리하는 경로에서 발생하는 것으로 추정
+- `H=1, W=1`은 정상 비디오 프레임 크기가 아니므로 부모 클래스의 프레임 변환 로직이 관여하는 것으로 보임
+
+**조사 필요 사항**:
+- Qwen3.5에서는 발생하지 않고 Gemma4에서만 발생하는 것으로 확인됨
+- 가설: Gemma4 비디오 프로세서 호출 시 `pixel_values`(이미지용)가 빈 값으로 함께 전달되어 HF 이미지 처리 유틸리티가 `[0, 3, 1, 1]` 형태의 빈 텐서를 처리하려다 워닝 발생 가능성
+- `Qwen3VLVideoProcessor.__call__()`이 내부적으로 이미지 처리 경로를 함께 실행하는 경우 확인 필요
+- `-W error::UserWarning`으로 정확한 스택 트레이스 확인 권장

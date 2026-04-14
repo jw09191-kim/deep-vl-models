@@ -144,7 +144,10 @@ class VJEPA2VisualModule(nn.Module):
             with torch.no_grad(), torch.autocast(device_type, dtype=torch.bfloat16):
                 out = self.encoder(pixel_values)
         else:
-            out = self.encoder(pixel_values)
+            # encoder는 기본적으로 frozen — no_grad로 불필요한 gradient 계산 방지
+            # VJEPA를 실제로 학습할 때는 이 with 블록을 제거할 것
+            with torch.no_grad():
+                out = self.encoder(pixel_values)
             out = out.last_hidden_state
         return out
 
@@ -160,6 +163,71 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
         super()._validate_model_kwargs(model_kwargs)
+
+    def forward(
+        self,
+        input_ids=None,
+        pixel_values=None,
+        image_grid_thw=None,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        inputs_embeds=None,
+        attention_mask=None,
+        **kwargs,
+    ):
+        has_visual = (
+            (pixel_values is not None and image_grid_thw is not None)
+            or (pixel_values_videos is not None and video_grid_thw is not None)
+        )
+
+        if has_visual and inputs_embeds is None and input_ids is not None:
+            inputs_embeds = self.model.language_model.embed_tokens(input_ids)
+
+            if pixel_values is not None and image_grid_thw is not None:
+                n_images = image_grid_thw.shape[0]
+                pps = self.model.visual.patches_per_side
+                image_embeds_list, tile_offset = [], 0
+                for i in range(n_images):
+                    t, h, w = image_grid_thw[i].tolist()
+                    n_tiles = (h * w) // (pps * pps) if t == 1 else 1
+                    pv = pixel_values[tile_offset:tile_offset + n_tiles]
+                    output = self.model.get_image_features(pv, image_grid_thw[i:i + 1])
+                    embeds = output.pooler_output[0]
+                    image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                    tile_offset += n_tiles
+                image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+                image_mask, _ = self.model.get_placeholder_mask(
+                    input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+                )
+                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+            if pixel_values_videos is not None and video_grid_thw is not None:
+                n_videos = video_grid_thw.shape[0]
+                pps = self.model.visual.patches_per_side
+                video_embeds_list, tile_offset = [], 0
+                for i in range(n_videos):
+                    t, h, w = video_grid_thw[i].tolist()
+                    n_tiles = (h * w) // (pps * pps)
+                    pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
+                    output = self.model.get_video_features(pv, video_grid_thw[i:i + 1])
+                    embeds = output.pooler_output[0]
+                    video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                    tile_offset += n_tiles
+                video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+                _, video_mask = self.model.get_placeholder_mask(
+                    input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+                )
+                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+
+            input_ids = None  # inputs_embeds로 전환
+
+        return super().forward(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            # pixel_values / pixel_values_videos 전달 안 함 (이미 주입 완료)
+            **kwargs,
+        )
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
@@ -283,11 +351,6 @@ class Qwen3_5VJEPA21GModel(Qwen3_5VJEPA21Model):
 class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
     VISION_MODEL_ID = None
 
-    def _validate_model_kwargs(self, model_kwargs):
-        model_kwargs.pop("num_soft_tokens_per_image", None)
-        model_kwargs.pop("num_soft_tokens_per_video", None)
-        super()._validate_model_kwargs(model_kwargs)
-
     def get_image_features(self, pixel_values, image_grid_thw, image_position_ids=None, **kwargs):
         merge_size = self.config.vision_config.spatial_merge_size
         pps        = self.visual.patches_per_side
@@ -345,6 +408,91 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
 
     def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
         return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)
+
+    def forward(
+        self,
+        input_ids=None,
+        pixel_values=None,
+        image_grid_thw=None,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        inputs_embeds=None,
+        attention_mask=None,
+        **kwargs,
+    ):
+        has_visual = (
+            (pixel_values is not None and image_grid_thw is not None)
+            or (pixel_values_videos is not None and video_grid_thw is not None)
+        )
+
+        if has_visual and inputs_embeds is None and input_ids is not None:
+            # 1. 토큰 임베딩 계산
+            inputs_embeds = self.model.get_input_embeddings()(input_ids)
+
+            # 2. sanitized input_ids 생성 (visual 위치 → pad_token_id)
+            #    monkey-patched get_per_layer_inputs가 inputs_embeds만으로 역추적하는
+            #    O(batch × seq × vocab × hidden) OOM을 방지하기 위해 캐싱
+            image_mask_2d, video_mask_2d, audio_mask_2d = self.model.get_placeholder_mask(input_ids)
+            visual_mask = image_mask_2d | video_mask_2d | audio_mask_2d
+            sanitized_ids = input_ids.clone()
+            sanitized_ids[visual_mask] = self.config.text_config.pad_token_id
+            self.model.language_model._vjepa_llm_input_ids = sanitized_ids
+
+            # 3. 이미지 feature 주입
+            if pixel_values is not None and image_grid_thw is not None:
+                n_images = image_grid_thw.shape[0]
+                pps = self.visual.patches_per_side
+                image_embeds_list = []
+                tile_offset = 0
+                for i in range(n_images):
+                    t, h, w = image_grid_thw[i].tolist()
+                    n_tiles = (h * w) // (pps * pps) if t == 1 else 1
+                    pv = pixel_values[tile_offset:tile_offset + n_tiles]
+                    output = self.get_image_features(pv, image_grid_thw[i:i + 1])
+                    embeds = output.pooler_output[0]
+                    image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                    tile_offset += n_tiles
+                image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+                img_mask, _, _ = self.model.get_placeholder_mask(input_ids)
+                inputs_embeds = inputs_embeds.masked_scatter(
+                    img_mask.unsqueeze(-1).expand_as(inputs_embeds), image_embeds
+                )
+
+            # 4. 비디오 feature 주입
+            if pixel_values_videos is not None and video_grid_thw is not None:
+                n_videos = video_grid_thw.shape[0]
+                pps = self.visual.patches_per_side
+                video_embeds_list = []
+                tile_offset = 0
+                for i in range(n_videos):
+                    t, h, w = video_grid_thw[i].tolist()
+                    n_tiles = (h * w) // (pps * pps)
+                    pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
+                    output = self.get_video_features(pv, video_grid_thw[i:i + 1])
+                    embeds = output.pooler_output[0]
+                    video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
+                    tile_offset += n_tiles
+                video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
+                _, vid_mask, _ = self.model.get_placeholder_mask(input_ids)
+                inputs_embeds = inputs_embeds.masked_scatter(
+                    vid_mask.unsqueeze(-1).expand_as(inputs_embeds), video_embeds
+                )
+
+            input_ids = None  # inputs_embeds로 전환, pixel_values는 parent에 전달하지 않음
+
+        return super().forward(
+            input_ids=input_ids,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            # pixel_values / pixel_values_videos: 이미 주입 완료 → parent에 전달 안 함
+            **kwargs,
+        )
+
+    def _validate_model_kwargs(self, model_kwargs):
+        model_kwargs.pop("num_soft_tokens_per_image", None)
+        model_kwargs.pop("num_soft_tokens_per_video", None)
+        # image_grid_thw / video_grid_thw는 forward()가 직접 소비하므로 제거하지 않음
+        super()._validate_model_kwargs(model_kwargs)
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
