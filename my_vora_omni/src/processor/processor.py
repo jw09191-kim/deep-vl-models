@@ -158,6 +158,29 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
 
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+        # Use pyav instead of torchcodec: torchcodec reads total_frames from container
+        # metadata and crashes when actual decodeable frames are fewer (metadata mismatch).
+        # pyav decodes until stream exhaustion and handles this gracefully.
+        self.video_backend = "pyav"
+
+    def preprocess(self, videos, **kwargs):
+        try:
+            return super().preprocess(videos, **kwargs)
+        except RuntimeError as exc:
+            if "no more frames" not in str(exc):
+                raise
+            import warnings
+            warnings.warn(
+                f"VJEPAVideoProcessor: torchcodec raised '{exc}'; retrying with pyav.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            _orig = self.video_backend
+            self.video_backend = "pyav"
+            try:
+                return super().preprocess(videos, **kwargs)
+            finally:
+                self.video_backend = _orig
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
