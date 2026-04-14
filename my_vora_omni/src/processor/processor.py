@@ -159,6 +159,45 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
 
+    def fetch_videos(self, video_url_or_urls, sample_indices_fn=None, **kwargs):
+        """Override to fall back to PyAV when torchcodec fails.
+
+        Short video clips (e.g. exactly 16 frames) cause torchcodec to raise
+        ``RuntimeError: Requested next frame while there are no more frames left
+        to decode`` due to an off-by-one in its sequential decoder.  PyAV uses
+        timestamp-based seeking and handles these clips correctly.
+        """
+        from transformers.video_utils import load_video
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Handle list/tuple: delegate each video individually so the fallback
+        # applies per-video and matches the parent's (videos, metadata) tuple format.
+        if isinstance(video_url_or_urls, (list, tuple)):
+            results = [
+                self.fetch_videos(x, sample_indices_fn=sample_indices_fn, **kwargs)
+                for x in video_url_or_urls
+            ]
+            return list(zip(*results))
+
+        # Single video path: try default backend first (torchcodec), fall back to pyav.
+        try:
+            return super().fetch_videos(
+                video_url_or_urls, sample_indices_fn=sample_indices_fn, **kwargs
+            )
+        except RuntimeError as e:
+            logger.warning(
+                "[VJEPAVideoProcessor] torchcodec failed for %r (%s); "
+                "retrying with pyav backend.",
+                video_url_or_urls,
+                e,
+            )
+            return load_video(
+                video_url_or_urls,
+                backend="pyav",
+                sample_indices_fn=sample_indices_fn,
+            )
+
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
         merge          = getattr(self, 'merge_size', 2)
