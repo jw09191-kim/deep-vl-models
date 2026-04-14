@@ -159,20 +159,43 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
 
-    def fetch_videos(self, video_url_or_urls, sample_indices_fn=None, **kwargs):
-        """Override to fall back to PyAV when torchcodec fails.
+    # Image extensions that indicate pre-extracted video frames
+    _IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.gif'})
 
-        Short video clips (e.g. exactly 16 frames) cause torchcodec to raise
-        ``RuntimeError: Requested next frame while there are no more frames left
-        to decode`` due to an off-by-one in its sequential decoder.  PyAV uses
-        timestamp-based seeking and handles these clips correctly.
+    def fetch_videos(self, video_url_or_urls, sample_indices_fn=None, **kwargs):
+        """Override to handle two extra cases the base class cannot.
+
+        Case 1 — pre-extracted frames (LLaVA-Video format):
+            "videos": [["frame_0.jpg", "frame_1.jpg", ...]]
+            The inner list is a sequence of image file paths representing one
+            video.  The base class would treat each jpg as a separate video
+            file and fail when torchcodec tries to seek past the single frame.
+            We detect this pattern and load the images directly.
+
+        Case 2 — short video clips (torchcodec off-by-one):
+            Short MP4/AVI clips whose reported frame count equals the number of
+            requested frames cause torchcodec to peek past EOF when retrieving
+            the last frame.  We retry with PyAV (timestamp-based seek) which
+            handles boundary frames correctly.
         """
+        from pathlib import Path
         from transformers.video_utils import load_video
         import logging
         logger = logging.getLogger(__name__)
 
-        # Handle list/tuple: delegate each video individually so the fallback
-        # applies per-video and matches the parent's (videos, metadata) tuple format.
+        # Case 1: flat list where every element is an image path
+        #   → treat the whole list as the frames of one video
+        if (isinstance(video_url_or_urls, (list, tuple))
+                and len(video_url_or_urls) > 0
+                and all(isinstance(x, (str, Path))
+                        and Path(str(x)).suffix.lower() in self._IMAGE_EXTS
+                        for x in video_url_or_urls)):
+            return self._load_frames_from_images(
+                [str(p) for p in video_url_or_urls], sample_indices_fn
+            )
+
+        # Outer list of video items (paths or nested image-frame lists)
+        # — recurse so per-item fallback applies to each independently.
         if isinstance(video_url_or_urls, (list, tuple)):
             results = [
                 self.fetch_videos(x, sample_indices_fn=sample_indices_fn, **kwargs)
@@ -180,7 +203,7 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
             ]
             return list(zip(*results))
 
-        # Single video path: try default backend first (torchcodec), fall back to pyav.
+        # Single video file path: try torchcodec first, fall back to PyAV.
         try:
             return super().fetch_videos(
                 video_url_or_urls, sample_indices_fn=sample_indices_fn, **kwargs
@@ -197,6 +220,32 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
                 backend="pyav",
                 sample_indices_fn=sample_indices_fn,
             )
+
+    def _load_frames_from_images(self, image_paths, sample_indices_fn=None):
+        """Load pre-extracted video frames from a list of image file paths.
+
+        Returns (video_tensor, metadata) in the same format as load_video():
+          - video_tensor: torch.Tensor [T, C, H, W] uint8
+          - metadata: dict with fps / duration / num_frames
+        """
+        import numpy as np
+        from PIL import Image as PILImage
+
+        frames = [
+            np.array(PILImage.open(p).convert("RGB"), dtype=np.uint8)
+            for p in image_paths
+        ]
+        video_np = np.stack(frames, axis=0)  # [T, H, W, C] uint8
+
+        if sample_indices_fn is not None:
+            indices = sample_indices_fn(len(frames))
+            video_np = video_np[indices]
+
+        # [T, H, W, C] → [T, C, H, W] to match torchcodec output
+        video_tensor = torch.from_numpy(video_np).permute(0, 3, 1, 2).contiguous()
+        T = video_tensor.shape[0]
+        metadata = {"fps": 1.0, "duration": float(T), "num_frames": T}
+        return video_tensor, metadata
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
