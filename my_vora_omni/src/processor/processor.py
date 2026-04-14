@@ -9,10 +9,6 @@ from transformers import (
 from transformers import Gemma4ImageProcessor, Gemma4VideoProcessor, Gemma4Processor
 from transformers.image_utils import SizeDict
 from transformers.image_processing_utils import BatchFeature
-from transformers.image_processing_utils_fast import (
-    group_images_by_shape,
-    reorder_images,
-)
 
 import torch
 
@@ -76,36 +72,17 @@ def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
 # Qwen3.5 VJEPA Processors
 # ──────────────────────────────────────────────
 
-class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
-    def __init__(
-        self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
-    ):
-        cfg = VoRAVisionConfig(vision_model_id)
+class VJEPAImageMixin:
+    """VJEPA 타일 기반 이미지 전처리 로직을 제공하는 Mixin."""
 
-        kwargs.setdefault("merge_size", cfg.MERGE_SIZE)
-        kwargs.setdefault("patch_size", cfg.patch_size)
-        kwargs.setdefault("image_mean", cfg.MEAN)
-        kwargs.setdefault("image_std", cfg.STD)
-        kwargs.setdefault(
-            "size",
-            {
-                "longest_edge": cfg.image_size**2,
-                "shortest_edge": cfg.image_size**2,
-            },
-        )
-        super().__init__(**kwargs)
-        self.tubelet_size = cfg.tubelet_size
-        self.patch_size = cfg.patch_size
-        self.image_size = cfg.image_size
-
-    def _preprocess(self, images, do_resize, size, disable_grouping=None, **kwargs):
+    def _vjepa_preprocess_images(self, images, **kwargs):
         max_tiles = int(os.environ.get("IMAGE_MAX_TILES", "4"))
         merge = getattr(self, "merge_size", 2)
         h_patch = self.image_size // self.patch_size
         rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
         do_rescale = kwargs.get("do_rescale", True)
-        image_mean = kwargs.get("image_mean")
-        image_std = kwargs.get("image_std")
+        image_mean = kwargs.get("image_mean") or self.image_mean
+        image_std = kwargs.get("image_std") or self.image_std
 
         all_tiles = []
         all_grid_thw = []
@@ -168,7 +145,7 @@ class VJEPAImageProcessor(Qwen2VLImageProcessorFast):
         )
 
 
-class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
+class VJEPAImageProcessor(VJEPAImageMixin, Qwen2VLImageProcessorFast):
     def __init__(
         self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
     ):
@@ -190,8 +167,12 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         self.patch_size = cfg.patch_size
         self.image_size = cfg.image_size
 
-        self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
-        self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+    def _preprocess(self, images, do_resize=None, size=None, disable_grouping=None, **kwargs):  # noqa: ARG002
+        return self._vjepa_preprocess_images(images, **kwargs)
+
+
+class VJEPAVideoMixin:
+    """VJEPA 타일 기반 비디오 전처리 로직과 sample_frames를 제공하는 Mixin."""
 
     def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
         total = metadata.total_num_frames
@@ -203,14 +184,14 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우 방어
         return indices.clip(0, max(0, total - 2))
 
-    def _preprocess(self, videos, do_resize, size, **kwargs):
+    def _vjepa_preprocess_videos(self, videos, **kwargs):
         max_tiles = int(os.environ.get("VIDEO_MAX_TILES", "4"))
         merge = getattr(self, "merge_size", 2)
-        h_patch = self.image_size // self.patch_size  # 24
+        h_patch = self.image_size // self.patch_size
         rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
         do_rescale = kwargs.get("do_rescale", True)
-        image_mean = kwargs.get("image_mean")
-        image_std = kwargs.get("image_std")
+        image_mean = kwargs.get("image_mean") or self.image_mean
+        image_std = kwargs.get("image_std") or self.image_std
 
         all_tiles = []
         all_grid_thw = []
@@ -277,6 +258,35 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
         )
 
 
+class VJEPAVideoProcessor(VJEPAVideoMixin, Qwen3VLVideoProcessor):
+    def __init__(
+        self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
+    ):
+        cfg = VoRAVisionConfig(vision_model_id)
+
+        kwargs.setdefault("merge_size", cfg.MERGE_SIZE)
+        kwargs.setdefault("patch_size", cfg.patch_size)
+        kwargs.setdefault("image_mean", cfg.MEAN)
+        kwargs.setdefault("image_std", cfg.STD)
+        kwargs.setdefault(
+            "size",
+            {
+                "longest_edge": cfg.image_size**2,
+                "shortest_edge": cfg.image_size**2,
+            },
+        )
+        super().__init__(**kwargs)
+        self.tubelet_size = cfg.tubelet_size
+        self.patch_size = cfg.patch_size
+        self.image_size = cfg.image_size
+
+        self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
+        self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+
+    def _preprocess(self, videos, do_resize=None, size=None, **kwargs):  # noqa: ARG002
+        return self._vjepa_preprocess_videos(videos, **kwargs)
+
+
 class Qwen3VLVJEPAProcessor(Qwen3VLProcessor):
     VISION_MODEL_ID = None
 
@@ -323,137 +333,7 @@ class Qwen3VLVJepa21GProcessor(Qwen3VLVJEPAProcessor):
 # Gemma-4 VJEPA Processors
 # ──────────────────────────────────────────────
 
-def _vjepa_image_preprocess(self, images, **kwargs):
-    """VJEPA 타일 기반 이미지 전처리. Gemma4VJEPAImageProcessor와 공유."""
-    max_tiles = int(os.environ.get("IMAGE_MAX_TILES", "4"))
-    merge = self.merge_size
-    h_patch = self.image_size // self.patch_size
-    rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
-    do_rescale = kwargs.get("do_rescale", True)
-    image_mean = kwargs.get("image_mean") or self.image_mean
-    image_std = kwargs.get("image_std") or self.image_std
-
-    all_tiles = []
-    all_grid_thw = []
-    all_tokens = []
-
-    for img in images:
-        # img: [C, H, W]
-        _, orig_h, orig_w = img.shape
-        n_rows, n_cols = _select_tile_layout(orig_h, orig_w, max_tiles)
-        n_tiles = n_rows * n_cols
-
-        img_batch = self.resize(
-            img.unsqueeze(0),
-            SizeDict(
-                height=n_rows * self.image_size,
-                width=n_cols * self.image_size,
-            ),
-        )  # [1, C, target_h, target_w]
-
-        if do_rescale:
-            img_batch = img_batch * rescale_factor
-
-        mean = torch.tensor(image_mean, dtype=img_batch.dtype, device=img_batch.device).view(1, 3, 1, 1)
-        std = torch.tensor(image_std, dtype=img_batch.dtype, device=img_batch.device).view(1, 3, 1, 1)
-        img_batch = (img_batch - mean) / std
-        img_norm = img_batch.squeeze(0)  # [C, target_h, target_w]
-
-        C = img_norm.shape[0]
-        tiles = img_norm.view(C, n_rows, self.image_size, n_cols, self.image_size)
-        tiles = (
-            tiles.permute(1, 3, 0, 2, 4)
-            .contiguous()
-            .reshape(n_tiles, C, self.image_size, self.image_size)
-        )
-        # tubelet 차원 추가: [n_tiles, tubelet_size, C, H, W]
-        tiles = tiles.unsqueeze(1).repeat(1, self.tubelet_size, 1, 1, 1)
-
-        h_total = h_patch * n_rows
-        w_total = h_patch * n_cols
-        all_tiles.append(tiles)
-        all_grid_thw.append([1, h_total, w_total])
-        all_tokens.append((h_total // merge) * (w_total // merge))
-
-    pixel_values = torch.cat(all_tiles, dim=0)  # [total_tiles, tubelet_size, C, H, W]
-    image_grid_thw = torch.tensor(all_grid_thw, dtype=torch.long)
-
-    return BatchFeature(
-        data={
-            "pixel_values": pixel_values,
-            "image_grid_thw": image_grid_thw,
-            "num_soft_tokens_per_image": all_tokens,
-        },
-        tensor_type=kwargs.get("return_tensors", None),
-    )
-
-
-def _vjepa_video_preprocess(self, videos, **kwargs):
-    """VJEPA 타일 기반 비디오 전처리. Gemma4VJEPAVideoProcessor와 공유."""
-    max_tiles = int(os.environ.get("VIDEO_MAX_TILES", "4"))
-    merge = self.merge_size
-    h_patch = self.image_size // self.patch_size
-    rescale_factor = kwargs.get("rescale_factor", 1 / 255.0)
-    do_rescale = kwargs.get("do_rescale", True)
-    image_mean = kwargs.get("image_mean") or self.image_mean
-    image_std = kwargs.get("image_std") or self.image_std
-
-    all_tiles = []
-    all_grid_thw = []
-    all_tokens = []
-
-    for vid in videos:
-        # vid: [T, C, H, W]
-        T, C, orig_h, orig_w = vid.shape
-
-        # T가 tubelet_size의 배수가 아니면 마지막 프레임으로 패딩
-        if T % self.tubelet_size != 0:
-            pad = self.tubelet_size - (T % self.tubelet_size)
-            vid = torch.cat([vid, vid[-1:].expand(pad, -1, -1, -1)], dim=0)
-            T = vid.shape[0]
-
-        n_rows, n_cols = _select_tile_layout(orig_h, orig_w, max_tiles)
-        n_tiles = n_rows * n_cols
-
-        frames = self.resize(
-            vid,
-            SizeDict(height=n_rows * self.image_size, width=n_cols * self.image_size),
-        )  # [T, C, target_h, target_w]
-
-        if do_rescale:
-            frames = frames * rescale_factor
-
-        mean = torch.tensor(image_mean, dtype=frames.dtype, device=frames.device).view(1, 3, 1, 1)
-        std = torch.tensor(image_std, dtype=frames.dtype, device=frames.device).view(1, 3, 1, 1)
-        frames = (frames - mean) / std  # [T, C, target_h, target_w]
-
-        # 공간 타일 분할: [n_tiles, T, C, image_size, image_size]
-        tiles = frames.view(T, C, n_rows, self.image_size, n_cols, self.image_size)
-        tiles = tiles.permute(2, 4, 0, 1, 3, 5).contiguous()  # [n_rows, n_cols, T, C, H, W]
-        tiles = tiles.reshape(n_tiles, T, C, self.image_size, self.image_size)
-
-        grid_t = T // self.tubelet_size
-        h_total = h_patch * n_rows
-        w_total = h_patch * n_cols
-
-        all_tiles.append(tiles)
-        all_grid_thw.append([grid_t, h_total, w_total])
-        all_tokens.append(grid_t * (h_total // merge) * (w_total // merge))
-
-    pixel_values_videos = torch.cat(all_tiles, dim=0)
-    video_grid_thw = torch.tensor(all_grid_thw, dtype=torch.long)
-
-    return BatchFeature(
-        data={
-            "pixel_values_videos": pixel_values_videos,
-            "video_grid_thw": video_grid_thw,
-            "num_soft_tokens_per_video": all_tokens,
-        },
-        tensor_type=kwargs.get("return_tensors", None),
-    )
-
-
-class Gemma4VJEPAImageProcessor(Gemma4ImageProcessor):
+class Gemma4VJEPAImageProcessor(VJEPAImageMixin, Gemma4ImageProcessor):
     """Gemma4 base를 사용하는 VJEPA 이미지 프로세서.
     _preprocess를 VJEPA 타일 방식으로 완전 override한다.
     출력: pixel_values [total_tiles, tubelet_size, C, H, W], image_grid_thw
@@ -482,10 +362,10 @@ class Gemma4VJEPAImageProcessor(Gemma4ImageProcessor):
         # self.patch_size는 kwargs를 통해 super().__init__에서 이미 설정됨
 
     def _preprocess(self, images, **kwargs):
-        return _vjepa_image_preprocess(self, images, **kwargs)
+        return self._vjepa_preprocess_images(images, **kwargs)
 
 
-class Gemma4VJEPAVideoProcessor(Gemma4VideoProcessor):
+class Gemma4VJEPAVideoProcessor(VJEPAVideoMixin, Gemma4VideoProcessor):
     """Gemma4 base를 사용하는 VJEPA 비디오 프로세서.
     sample_frames를 override해 torchcodec metadata overcount를 방어하고,
     _preprocess를 VJEPA 타일 방식으로 완전 override한다.
@@ -518,18 +398,8 @@ class Gemma4VJEPAVideoProcessor(Gemma4VideoProcessor):
         max_frames = (max_frames // self.tubelet_size) * self.tubelet_size
         self.num_frames = max(self.tubelet_size, max_frames)
 
-    def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
-        total = metadata.total_num_frames
-        # 일부 base class는 num_frames > total_num_frames일 때 ValueError를 raise한다.
-        # 손상/짧은 비디오를 graceful하게 처리하기 위해 super() 호출 전에 클램핑
-        if num_frames is not None and num_frames > total:
-            num_frames = max(1, total)
-        indices = super().sample_frames(metadata, num_frames=num_frames, fps=fps, **kwargs)
-        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우 방어
-        return indices.clip(0, max(0, total - 2))
-
     def _preprocess(self, videos, **kwargs):
-        return _vjepa_video_preprocess(self, videos, **kwargs)
+        return self._vjepa_preprocess_videos(videos, **kwargs)
 
 
 class Gemma4VJEPAProcessor(Gemma4Processor):
