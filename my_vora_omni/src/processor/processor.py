@@ -14,6 +14,23 @@ from transformers.image_processing_utils_fast import group_images_by_shape, reor
 import torch
 
 
+class _VideoMeta(dict):
+    """Metadata dict that also supports attribute-style access (meta.fps as well as meta["fps"]).
+
+    Transformers' internal code uses both styles depending on the version, so we
+    support both to avoid AttributeError when our custom image-frame loader returns
+    metadata that is later accessed as an object attribute.
+    """
+    def __getattr__(self, key):
+        try:
+            return self[key]
+        except KeyError:
+            raise AttributeError(key)
+
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
 VJEPA21_CONFIGS = {
     "vjepa2_1_vit_base_384":    dict(image_size=384, patch_size=16, tubelet_size=2, hidden_size=768),
     "vjepa2_1_vit_large_384":   dict(image_size=384, patch_size=16, tubelet_size=2, hidden_size=1024),
@@ -158,6 +175,113 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
 
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+
+    # Image extensions that indicate pre-extracted video frames
+    _IMAGE_EXTS = frozenset({'.jpg', '.jpeg', '.png', '.webp', '.bmp', '.tiff', '.tif', '.gif'})
+
+    def fetch_videos(self, video_url_or_urls, sample_indices_fn=None, **kwargs):
+        """Override to handle two extra cases the base class cannot.
+
+        Case 1 — pre-extracted frames (LLaVA-Video format):
+            "videos": [["frame_0.jpg", "frame_1.jpg", ...]]
+            The inner list is a sequence of image file paths representing one
+            video.  The base class would treat each jpg as a separate video
+            file and fail when torchcodec tries to seek past the single frame.
+            We detect this pattern and load the images directly.
+
+        Case 2 — short video clips (torchcodec off-by-one):
+            Short MP4/AVI clips whose reported frame count equals the number of
+            requested frames cause torchcodec to peek past EOF when retrieving
+            the last frame.  We retry with PyAV (timestamp-based seek) which
+            handles boundary frames correctly.
+        """
+        from pathlib import Path
+        from transformers.video_utils import load_video
+        import logging
+        logger = logging.getLogger(__name__)
+
+        # Case 1: flat list where every element is an image path
+        #   → treat the whole list as the frames of one video
+        if (isinstance(video_url_or_urls, (list, tuple))
+                and len(video_url_or_urls) > 0
+                and all(isinstance(x, (str, Path))
+                        and Path(str(x)).suffix.lower() in self._IMAGE_EXTS
+                        for x in video_url_or_urls)):
+            return self._load_frames_from_images(
+                [str(p) for p in video_url_or_urls], sample_indices_fn
+            )
+
+        # Outer list of video items (paths or nested image-frame lists)
+        # — recurse so per-item fallback applies to each independently.
+        if isinstance(video_url_or_urls, (list, tuple)):
+            results = [
+                self.fetch_videos(x, sample_indices_fn=sample_indices_fn, **kwargs)
+                for x in video_url_or_urls
+            ]
+            return list(zip(*results))
+
+        # Single video file path: try torchcodec first, fall back to PyAV.
+        try:
+            return super().fetch_videos(
+                video_url_or_urls, sample_indices_fn=sample_indices_fn, **kwargs
+            )
+        except RuntimeError as e:
+            logger.warning(
+                "[VJEPAVideoProcessor] torchcodec failed for %r (%s); "
+                "retrying with pyav backend.",
+                video_url_or_urls,
+                e,
+            )
+            return load_video(
+                video_url_or_urls,
+                backend="pyav",
+                sample_indices_fn=sample_indices_fn,
+            )
+
+    def _load_frames_from_images(self, image_paths, sample_indices_fn=None):
+        """Load pre-extracted video frames from a list of image file paths.
+
+        Returns (video_tensor, metadata) in the same format as load_video():
+          - video_tensor: torch.Tensor [T, C, H, W] uint8
+          - metadata: dict with fps / duration / num_frames
+        """
+        import numpy as np
+        from PIL import Image as PILImage
+
+        frames = [
+            np.array(PILImage.open(p).convert("RGB"), dtype=np.uint8)
+            for p in image_paths
+        ]
+        video_np = np.stack(frames, axis=0)  # [T, H, W, C] uint8
+
+        if sample_indices_fn is not None:
+            indices = sample_indices_fn(len(frames))
+            # Ensure indices is a plain numpy array (sample_indices_fn may return torch.Tensor)
+            if hasattr(indices, 'numpy'):
+                indices = indices.cpu().numpy()
+            video_np = video_np[np.asarray(indices)]
+
+        # [T, H, W, C] → [T, C, H, W] to match torchcodec output
+        video_tensor = torch.from_numpy(np.ascontiguousarray(video_np.transpose(0, 3, 1, 2)))
+        T = video_tensor.shape[0]
+        # Use an attribute-accessible object so both meta["fps"] and meta.fps work
+        metadata = _VideoMeta(fps=1.0, duration=float(T), num_frames=T, total_num_frames=T)
+        return video_tensor, metadata
+
+    def preprocess(self, videos, **kwargs):
+        """Wrapper to surface the real error instead of Swift's opaque retry message."""
+        import logging
+        import traceback
+        logger = logging.getLogger(__name__)
+        try:
+            return super().preprocess(videos, **kwargs)
+        except Exception as e:
+            logger.error(
+                "[VJEPAVideoProcessor] preprocess failed for videos=%r\n%s",
+                videos,
+                traceback.format_exc(),
+            )
+            raise
 
     def _preprocess(self, videos, do_resize, size, **kwargs):
         max_tiles      = int(os.environ.get("VIDEO_MAX_TILES", "4"))
