@@ -46,7 +46,6 @@ from my_vora_omni.src.template.template import Qwen3_5VJEPATemplate, Gemma4VJEPA
 
 AutoImageProcessor.register(
     "VJEPAImageProcessor",
-    image_processor_class=VJEPAImageProcessor,
     fast_image_processor_class=VJEPAImageProcessor,
     exist_ok=True,
 )
@@ -104,13 +103,18 @@ register_template(
     QwenTemplateMeta(
         'vora_qwen35',
         template_cls=Qwen3_5VJEPATemplate,
-        default_system=None,
+        default_system='You are a helpful assistant.',
         thinking_prefix='<think>\n',
         non_thinking_prefix='<think>\n\n</think>\n\n',
         agent_template='qwen3_5',
         is_thinking=False,
     )
 )
+
+_QWEN35_MODEL_GROUP = [ModelGroup([
+    Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
+    Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
+])]
 
 _COMMON = dict(
     template='vora_qwen35',
@@ -120,70 +124,11 @@ _COMMON = dict(
     tags=['vision', 'video'],
 )
 
-register_model(
-    ModelMeta(
-        'vora-qwen35-vitl',
-        [ModelGroup([
-            Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
-            Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
-        ])],
-        Qwen35VJEPALLoader,
-        architectures=['Qwen3_5VJEPALModel'],
-        **_COMMON,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-qwen35-vitg',
-        [ModelGroup([
-            Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
-            Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
-        ])],
-        Qwen35VJEPAGLoader,
-        architectures=['Qwen3_5VJEPAGModel'],
-        **_COMMON,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-qwen35-vjepa21b',
-        [ModelGroup([
-            Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
-            Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
-        ])],
-        Qwen35VJEPA21BLoader,
-        architectures=['Qwen3_5VJEPA21BModel'],
-        **_COMMON,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-qwen35-vjepa21l',
-        [ModelGroup([
-            Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
-            Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
-        ])],
-        Qwen35VJEPA21LLoader,
-        architectures=['Qwen3_5VJEPA21LModel'],
-        **_COMMON,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-qwen35-vjepa21g',
-        [ModelGroup([
-            Model('Qwen/Qwen3.5-0.8B', 'Qwen/Qwen3.5-0.8B'),
-            Model('Qwen/Qwen3.5-2B',   'Qwen/Qwen3.5-2B'),
-        ])],
-        Qwen35VJEPA21GLoader,
-        architectures=['Qwen3_5VJEPA21GModel'],
-        **_COMMON,
-    )
-)
+register_model(ModelMeta('vora-qwen35-vitl',     _QWEN35_MODEL_GROUP, Qwen35VJEPALLoader,    architectures=['Qwen3_5VJEPALModel'],    **_COMMON))
+register_model(ModelMeta('vora-qwen35-vitg',     _QWEN35_MODEL_GROUP, Qwen35VJEPAGLoader,    architectures=['Qwen3_5VJEPAGModel'],    **_COMMON))
+register_model(ModelMeta('vora-qwen35-vjepa21b', _QWEN35_MODEL_GROUP, Qwen35VJEPA21BLoader,  architectures=['Qwen3_5VJEPA21BModel'],  **_COMMON))
+register_model(ModelMeta('vora-qwen35-vjepa21l', _QWEN35_MODEL_GROUP, Qwen35VJEPA21LLoader,  architectures=['Qwen3_5VJEPA21LModel'],  **_COMMON))
+register_model(ModelMeta('vora-qwen35-vjepa21g', _QWEN35_MODEL_GROUP, Qwen35VJEPA21GLoader,  architectures=['Qwen3_5VJEPA21GModel'],  **_COMMON))
 
 
 # ──────────────────────────────────────────────
@@ -236,88 +181,27 @@ register_template(
     Gemma4TemplateMeta(
         'vora_gemma4',
         template_cls=Gemma4VJEPATemplate,
+        default_system='You are a helpful assistant.',
     )
 )
+
+_GEMMA4_MODEL_GROUP = [ModelGroup([
+    Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
+    Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
+    Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
+    Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
+])]
 
 _COMMON_GEMMA4 = dict(
     template='vora_gemma4',
     is_multimodal=True,
     model_arch='gemma4_vjepa',
-    requires=['transformers>=4.53'],
+    requires=['transformers>=5.0.0'],
     tags=['vision', 'video'],
 )
 
-register_model(
-    ModelMeta(
-        'vora-gemma4-vitl',
-        [ModelGroup([
-            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
-            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
-            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
-            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
-        ])],
-        Gemma4VJEPALLoader,
-        architectures=['Gemma4VJEPALModel'],
-        **_COMMON_GEMMA4,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-gemma4-vitg',
-        [ModelGroup([
-            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
-            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
-            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
-            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
-        ])],
-        Gemma4VJEPAGLoader,
-        architectures=['Gemma4VJEPAGModel'],
-        **_COMMON_GEMMA4,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-gemma4-vjepa21b',
-        [ModelGroup([
-            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
-            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
-            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
-            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
-        ])],
-        Gemma4VJEPA21BLoader,
-        architectures=['Gemma4VJEPA21BModel'],
-        **_COMMON_GEMMA4,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-gemma4-vjepa21l',
-        [ModelGroup([
-            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
-            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
-            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
-            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
-        ])],
-        Gemma4VJEPA21LLoader,
-        architectures=['Gemma4VJEPA21LModel'],
-        **_COMMON_GEMMA4,
-    )
-)
-
-register_model(
-    ModelMeta(
-        'vora-gemma4-vjepa21g',
-        [ModelGroup([
-            Model('google/gemma-4-E2B',    'google/gemma-4-E2B'),
-            Model('google/gemma-4-E2B-it', 'google/gemma-4-E2B-it'),
-            Model('google/gemma-4-E4B',    'google/gemma-4-E4B'),
-            Model('google/gemma-4-E4B-it', 'google/gemma-4-E4B-it'),
-        ])],
-        Gemma4VJEPA21GLoader,
-        architectures=['Gemma4VJEPA21GModel'],
-        **_COMMON_GEMMA4,
-    )
-)
+register_model(ModelMeta('vora-gemma4-vitl',     _GEMMA4_MODEL_GROUP, Gemma4VJEPALLoader,    architectures=['Gemma4VJEPALModel'],    **_COMMON_GEMMA4))
+register_model(ModelMeta('vora-gemma4-vitg',     _GEMMA4_MODEL_GROUP, Gemma4VJEPAGLoader,    architectures=['Gemma4VJEPAGModel'],    **_COMMON_GEMMA4))
+register_model(ModelMeta('vora-gemma4-vjepa21b', _GEMMA4_MODEL_GROUP, Gemma4VJEPA21BLoader,  architectures=['Gemma4VJEPA21BModel'],  **_COMMON_GEMMA4))
+register_model(ModelMeta('vora-gemma4-vjepa21l', _GEMMA4_MODEL_GROUP, Gemma4VJEPA21LLoader,  architectures=['Gemma4VJEPA21LModel'],  **_COMMON_GEMMA4))
+register_model(ModelMeta('vora-gemma4-vjepa21g', _GEMMA4_MODEL_GROUP, Gemma4VJEPA21GLoader,  architectures=['Gemma4VJEPA21GModel'],  **_COMMON_GEMMA4))
