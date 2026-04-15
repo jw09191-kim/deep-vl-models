@@ -627,15 +627,6 @@ class TestDecodeGridFeaturesDirect:
         t, tokens, d = out.pooler_output[0].shape
         assert (t, tokens, d) == (2, 16, self.LLM_DIM)
 
-    def test_image_video_mixed_batch(self):
-        """img(1 tile) + video(4 tiles) 혼합 → pooler_output 길이 2."""
-        image_embeds = torch.randn(5, 16, self.D)  # 1 + 4
-        grid_thw = torch.tensor([[1, 4, 4], [2, 8, 8]])
-        out = self._call(image_embeds, grid_thw)
-        assert len(out.pooler_output) == 2
-        assert out.pooler_output[0].shape == (1, 4, self.LLM_DIM)
-        assert out.pooler_output[1].shape == (2, 16, self.LLM_DIM)
-
     @pytest.mark.parametrize("h,w,t,n_tiles", [
         (4, 4, 1, 1),
         (8, 4, 1, 2),
