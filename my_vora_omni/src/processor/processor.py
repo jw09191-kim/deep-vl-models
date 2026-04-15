@@ -72,6 +72,7 @@ def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
 # Qwen3.5 VJEPA Processors
 # ──────────────────────────────────────────────
 
+
 class VJEPAImageMixin:
     """VJEPA 타일 기반 이미지 전처리 로직을 제공하는 Mixin."""
 
@@ -167,23 +168,13 @@ class VJEPAImageProcessor(VJEPAImageMixin, Qwen2VLImageProcessorFast):
         self.patch_size = cfg.patch_size
         self.image_size = cfg.image_size
 
-    def _preprocess(self, images, do_resize=None, size=None, disable_grouping=None, **kwargs):  # noqa: ARG002
+    def _preprocess(
+        self, images, do_resize=None, size=None, disable_grouping=None, **kwargs
+    ):  # noqa: ARG002
         return self._vjepa_preprocess_images(images, **kwargs)
 
 
 class VJEPAVideoMixin:
-    """VJEPA 타일 기반 비디오 전처리 로직과 sample_frames를 제공하는 Mixin."""
-
-    def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
-        total = metadata.total_num_frames
-        # 일부 base class는 num_frames > total_num_frames일 때 ValueError를 raise한다.
-        # 손상/짧은 비디오를 graceful하게 처리하기 위해 super() 호출 전에 클램핑
-        if num_frames is not None and num_frames > total:
-            num_frames = max(1, total)
-        indices = super().sample_frames(metadata, num_frames=num_frames, fps=fps, **kwargs)
-        # container metadata의 total_num_frames가 실제 디코딩 가능 프레임보다 1 많은 경우 방어
-        return indices.clip(0, max(0, total - 2))
-
     def _vjepa_preprocess_videos(self, videos, **kwargs):
         max_tiles = int(os.environ.get("VIDEO_MAX_TILES", "4"))
         merge = getattr(self, "merge_size", 2)
@@ -282,6 +273,9 @@ class VJEPAVideoProcessor(VJEPAVideoMixin, Qwen3VLVideoProcessor):
 
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+        # Qwen3VLVideoProcessor 기본값 fps=2를 비활성화.
+        # preprocess()가 fps와 num_frames를 동시에 바인딩해 ValueError가 발생하는 것을 방지.
+        self.fps = None
 
     def _preprocess(self, videos, do_resize=None, size=None, **kwargs):  # noqa: ARG002
         return self._vjepa_preprocess_videos(videos, **kwargs)
@@ -333,13 +327,16 @@ class Qwen3VLVJepa21GProcessor(Qwen3VLVJEPAProcessor):
 # Gemma-4 VJEPA Processors
 # ──────────────────────────────────────────────
 
+
 class Gemma4VJEPAImageProcessor(VJEPAImageMixin, Gemma4ImageProcessor):
     """Gemma4 base를 사용하는 VJEPA 이미지 프로세서.
     _preprocess를 VJEPA 타일 방식으로 완전 override한다.
     출력: pixel_values [total_tiles, tubelet_size, C, H, W], image_grid_thw
     """
 
-    def __init__(self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs):
+    def __init__(
+        self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
+    ):
         cfg = VoRAVisionConfig(vision_model_id)
 
         kwargs.setdefault("image_mean", cfg.MEAN)
@@ -372,7 +369,9 @@ class Gemma4VJEPAVideoProcessor(VJEPAVideoMixin, Gemma4VideoProcessor):
     출력: pixel_values_videos [n_tiles, T, C, H, W], video_grid_thw
     """
 
-    def __init__(self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs):
+    def __init__(
+        self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
+    ):
         cfg = VoRAVisionConfig(vision_model_id)
 
         kwargs.setdefault("image_mean", cfg.MEAN)

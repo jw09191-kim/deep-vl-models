@@ -226,7 +226,7 @@ class TestImageProcessorOutput:
         out = img_proc_for(cls)(images=[make_pil(256, 256)], return_tensors="pt")
         assert out["pixel_values"].shape == (1, 2, 3, 256, 256)
         assert out["image_grid_thw"].tolist() == [[1, 16, 16]]
-        assert out["num_soft_tokens_per_image"] == [64]
+        assert as_list(out["num_soft_tokens_per_image"]) == [64]
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa2LProcessor, Gemma4VJepa2LProcessor])
     def test_256px_wide_2x(self, cls):
@@ -234,7 +234,7 @@ class TestImageProcessorOutput:
         out = img_proc_for(cls)(images=[make_pil(256, 512)], return_tensors="pt")
         assert out["pixel_values"].shape == (2, 2, 3, 256, 256)
         assert out["image_grid_thw"].tolist() == [[1, 16, 32]]
-        assert out["num_soft_tokens_per_image"] == [128]  # 8 * 16
+        assert as_list(out["num_soft_tokens_per_image"]) == [128]  # 8 * 16
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa2LProcessor, Gemma4VJepa2LProcessor])
     def test_256px_tall_2x(self, cls):
@@ -242,7 +242,7 @@ class TestImageProcessorOutput:
         out = img_proc_for(cls)(images=[make_pil(512, 256)], return_tensors="pt")
         assert out["pixel_values"].shape == (2, 2, 3, 256, 256)
         assert out["image_grid_thw"].tolist() == [[1, 32, 16]]
-        assert out["num_soft_tokens_per_image"] == [128]
+        assert as_list(out["num_soft_tokens_per_image"]) == [128]
 
     # ── Qwen3 / Gemma4 VJEPA2.1 (384 px) ──────────────────────────────────
 
@@ -261,14 +261,14 @@ class TestImageProcessorOutput:
         out = img_proc_for(cls)(images=[make_pil(384, 384)], return_tensors="pt")
         assert out["pixel_values"].shape == (1, 2, 3, 384, 384)
         assert out["image_grid_thw"].tolist() == [[1, 24, 24]]
-        assert out["num_soft_tokens_per_image"] == [144]
+        assert as_list(out["num_soft_tokens_per_image"]) == [144]
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa21BProcessor, Gemma4VJEPA21BProcessor])
     def test_384px_wide_2x(self, cls):
         out = img_proc_for(cls)(images=[make_pil(384, 768)], return_tensors="pt")
         assert out["pixel_values"].shape == (2, 2, 3, 384, 384)
         assert out["image_grid_thw"].tolist() == [[1, 24, 48]]
-        assert out["num_soft_tokens_per_image"] == [288]  # 12 * 24
+        assert as_list(out["num_soft_tokens_per_image"]) == [288]  # 12 * 24
 
     # ── token count == grid 공식 일관성 ────────────────────────────────────
 
@@ -335,14 +335,14 @@ class TestVideoProcessorOutput:
         out = run_video(vid_proc_for(cls), make_video_tensor(4, 256, 256))
         assert out["pixel_values_videos"].shape == (1, 4, 3, 256, 256)
         assert out["video_grid_thw"].tolist() == [[2, 16, 16]]
-        assert out["num_soft_tokens_per_video"] == [128]  # 2*8*8
+        assert as_list(out["num_soft_tokens_per_video"]) == [128]  # 2*8*8
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa2LProcessor, Gemma4VJepa2LProcessor])
     def test_256px_wide_video(self, cls):
         out = run_video(vid_proc_for(cls), make_video_tensor(4, 256, 512))
         assert out["pixel_values_videos"].shape == (2, 4, 3, 256, 256)
         assert out["video_grid_thw"].tolist() == [[2, 16, 32]]
-        assert out["num_soft_tokens_per_video"] == [256]  # 2*8*16
+        assert as_list(out["num_soft_tokens_per_video"]) == [256]  # 2*8*16
 
     # ── Qwen3 / Gemma4 VJEPA2.1 (384 px) ──────────────────────────────────
 
@@ -361,21 +361,21 @@ class TestVideoProcessorOutput:
         out = run_video(vid_proc_for(cls), make_video_tensor(4, 384, 384))
         assert out["pixel_values_videos"].shape == (1, 4, 3, 384, 384)
         assert out["video_grid_thw"].tolist() == [[2, 24, 24]]
-        assert out["num_soft_tokens_per_video"] == [288]  # 2*12*12
+        assert as_list(out["num_soft_tokens_per_video"]) == [288]  # 2*12*12
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa21BProcessor, Gemma4VJEPA21BProcessor])
     def test_384px_8frames_square(self, cls):
         out = run_video(vid_proc_for(cls), make_video_tensor(8, 384, 384))
         assert out["pixel_values_videos"].shape == (1, 8, 3, 384, 384)
         assert out["video_grid_thw"].tolist() == [[4, 24, 24]]
-        assert out["num_soft_tokens_per_video"] == [576]  # 4*12*12
+        assert as_list(out["num_soft_tokens_per_video"]) == [576]  # 4*12*12
 
     @pytest.mark.parametrize("cls", [Qwen3VLVJepa21BProcessor, Gemma4VJEPA21BProcessor])
     def test_384px_wide_video(self, cls):
         out = run_video(vid_proc_for(cls), make_video_tensor(4, 384, 768))
         assert out["pixel_values_videos"].shape == (2, 4, 3, 384, 384)
         assert out["video_grid_thw"].tolist() == [[2, 24, 48]]
-        assert out["num_soft_tokens_per_video"] == [576]  # 2*12*24
+        assert as_list(out["num_soft_tokens_per_video"]) == [576]  # 2*12*24
 
     # ── grid_t = T // tubelet_size ─────────────────────────────────────────
 
@@ -512,3 +512,88 @@ class TestVideoProcessorTubeletPadding:
         assert pv.shape[1] == 4, \
             f"{cls.__name__} T=4: temporal dim이 변경되면 안 됨 (got {pv.shape[1]})"
         assert out["video_grid_thw"][0, 0].item() == 2
+
+
+# ===========================================================================
+# 6. End-to-End — proc(videos=...) 전체 경로 검증
+#    run_video()/_preprocess() 직접 호출이 아닌 __call__ → preprocess()
+#    → _decode_and_sample_videos() → _preprocess() 경로를 타는지 확인
+#
+#    케이스 A: PIL 이미지 리스트  (디코더 불필요)
+#    케이스 B: mp4 파일 경로     (decord 필요, cv2로 더미 mp4 생성)
+# ===========================================================================
+
+
+class TestProcessorEndToEnd:
+
+    # ── A. PIL 이미지 리스트 ────────────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        "cls",
+        [Qwen3VLVJepa2LProcessor, Gemma4VJepa2LProcessor],
+    )
+    def test_pil_image_list(self, cls):
+        """[[PIL, PIL, PIL, PIL]] → proc() 전체 경로 — shape/token 검증."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+        frames = [make_pil(sz, sz) for _ in range(4)]
+
+        out = proc(videos=[frames], do_sample_frames=False, return_tensors="pt")
+
+        assert out["pixel_values_videos"].shape == (1, 4, 3, sz, sz)
+        assert out["video_grid_thw"][0, 0].item() == 2  # grid_t = 4 // tubelet_size(2)
+        assert as_list(out["num_soft_tokens_per_video"])[0] > 0
+
+    @pytest.mark.parametrize("cls", [Qwen3VLVJepa2LProcessor])
+    def test_pil_list_matches_tensor_path(self, cls):
+        """PIL 리스트 경로 출력 shape == _preprocess 직접 경로 출력 shape."""
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+
+        out_pil = proc(
+            videos=[[make_pil(sz, sz) for _ in range(4)]],
+            do_sample_frames=False,
+            return_tensors="pt",
+        )
+        out_tensor = run_video(proc, make_video_tensor(4, sz, sz))
+
+        assert out_pil["pixel_values_videos"].shape == out_tensor["pixel_values_videos"].shape
+        assert out_pil["video_grid_thw"].tolist() == out_tensor["video_grid_thw"].tolist()
+        assert (
+            as_list(out_pil["num_soft_tokens_per_video"])
+            == as_list(out_tensor["num_soft_tokens_per_video"])
+        )
+
+    # ── B. mp4 파일 경로 ────────────────────────────────────────────────────
+
+    @pytest.mark.parametrize("cls", [Qwen3VLVJepa2LProcessor])
+    def test_mp4_file(self, cls, tmp_path):
+        """실제 mp4 파일 경로 — cv2로 더미 mp4 생성, torchcodec으로 읽기.
+
+        transformers의 fetch_videos()는 torchcodec을 우선 선택한다.
+        torchcodec이 설치됐지만 FFmpeg 없이 깨진 경우(RuntimeError) skip.
+        """
+        cv2 = pytest.importorskip("cv2")
+        # torchcodec이 실제로 로드 가능한지 확인 (importable != loadable)
+        try:
+            import torchcodec  # noqa
+        except (ImportError, RuntimeError):
+            pytest.skip("torchcodec 미설치 또는 FFmpeg 없음 — mp4 테스트 건너뜀")
+
+        proc = vid_proc_for(cls)
+        sz = proc.image_size
+        mp4_path = tmp_path / "test.mp4"
+
+        writer = cv2.VideoWriter(
+            str(mp4_path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (sz, sz)
+        )
+        for _ in range(8):
+            writer.write(np.full((sz, sz, 3), 128, dtype=np.uint8))
+        writer.release()
+
+        out = proc(videos=[str(mp4_path)], num_frames=4, return_tensors="pt")
+
+        assert out["pixel_values_videos"].ndim == 5
+        assert out["video_grid_thw"].shape == (1, 3)
+        assert out["video_grid_thw"][0, 0].item() == 2  # 4 frames // tubelet_size(2)
+        assert as_list(out["num_soft_tokens_per_video"])[0] > 0

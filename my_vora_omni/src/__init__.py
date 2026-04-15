@@ -14,7 +14,7 @@ from .processor import (
 )
 from .template import Qwen3_5VJEPATemplate
 
-from . import register 
+# from . import register
 
 __all__ = [
     "Qwen3_5VJEPALModel",

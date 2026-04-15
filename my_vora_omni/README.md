@@ -159,6 +159,46 @@ The merger is the only component trained in Stage 1. Stage 2 adds LoRA adapters 
 
 ---
 
+## Testing
+
+모든 테스트는 repo root(`deep-vl-models/`)에서 실행한다.
+
+### 단위 테스트 (오프라인 가능)
+
+전처리 로직(shape, token 수, padding 등)을 HF Hub 없이 검증한다.
+
+```bash
+PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/test_processor.py -v
+```
+
+### 통합 테스트 (HF Hub 필요)
+
+`from_pretrained` 경로를 통해 실제 사용 경로를 검증한다.
+`HF_HUB_OFFLINE=1` 환경에서는 자동으로 skip된다.
+
+```bash
+PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/test_processor_integration.py -v -m integration
+```
+
+### 전체 실행
+
+```bash
+# 온라인 (integration 포함)
+PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/ -v
+
+# 오프라인 (integration 자동 skip)
+HF_HUB_OFFLINE=1 PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/ -v
+```
+
+### 테스트 파일 구조
+
+| 파일 | 종류 | 내용 |
+|---|---|---|
+| `tests/test_processor.py` | 단위 | 전처리 shape/token/padding 검증, 직접 인스턴스화 |
+| `tests/test_processor_integration.py` | 통합 (`@pytest.mark.integration`) | `from_pretrained` 경로, sub-processor 타입, 처리 결과 검증 |
+
+---
+
 ## Key Environment Variables
 
 | Variable | Default | Description |
