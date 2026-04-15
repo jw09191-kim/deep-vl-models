@@ -397,6 +397,19 @@ class Gemma4VJEPAVideoProcessor(VJEPAVideoMixin, Gemma4VideoProcessor):
         max_frames = (max_frames // self.tubelet_size) * self.tubelet_size
         self.num_frames = max(self.tubelet_size, max_frames)
 
+    def preprocess(self, videos, **kwargs):
+        result = super().preprocess(videos, **kwargs)
+        # Gemma4Processor.__call__ generates one timestamp block per frames_indices entry.
+        # VJEPA tokens represent the *entire* clip (grid_t × h × w), not one frame.
+        # Collapse frames_indices to a single entry so only one timestamp block is emitted,
+        # preventing the T × n_tokens explosion that overflows max_length.
+        if "video_metadata" in result:
+            for meta in result["video_metadata"]:
+                meta.fps = 1
+                if meta.frames_indices is not None and len(meta.frames_indices) > 0:
+                    meta.frames_indices = [meta.frames_indices[0]]
+        return result
+
     def _preprocess(self, videos, **kwargs):
         return self._vjepa_preprocess_videos(videos, **kwargs)
 
