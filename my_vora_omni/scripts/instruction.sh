@@ -53,7 +53,6 @@ swift sft \
     --model "$STAGE1_MODEL" \
     --model_type "$MODEL_TYPE" \
     --external_plugins 'my_vora_omni' \
-    --system "You are a helpful assistant that can understand and analyze images and videos." \
     --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
               './datasets/LLaVA-Video-178K/sources/youtube_video_2024.jsonl#50000' \
               './datasets/LLaVA-Video-178K/sources/Charades.jsonl' \
