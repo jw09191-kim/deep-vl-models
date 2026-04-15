@@ -335,6 +335,7 @@ class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
             param.requires_grad = False
 
         model.model.visual = visual
+        model.__class__ = cls
 
         target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(target_device)
@@ -414,9 +415,8 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
                     image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
                     tile_offset += n_tiles
                 image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                img_mask, _, _ = self.model.get_placeholder_mask(input_ids)
                 inputs_embeds = inputs_embeds.masked_scatter(
-                    img_mask.unsqueeze(-1).expand_as(inputs_embeds), image_embeds
+                    image_mask_2d.unsqueeze(-1).expand_as(inputs_embeds), image_embeds
                 )
 
             # 4. 비디오 feature 주입
@@ -434,9 +434,8 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
                     video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
                     tile_offset += n_tiles
                 video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                _, vid_mask, _ = self.model.get_placeholder_mask(input_ids)
                 inputs_embeds = inputs_embeds.masked_scatter(
-                    vid_mask.unsqueeze(-1).expand_as(inputs_embeds), video_embeds
+                    video_mask_2d.unsqueeze(-1).expand_as(inputs_embeds), video_embeds
                 )
 
             input_ids = None  # inputs_embeds로 전환, pixel_values는 parent에 전달하지 않음
@@ -537,6 +536,7 @@ class Gemma4VJEPA21Model(Gemma4VJEPAModel):
             param.requires_grad = False
 
         model.visual = visual
+        model.__class__ = cls
 
         target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         model = model.to(target_device)

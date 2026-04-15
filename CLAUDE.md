@@ -53,7 +53,7 @@ All scripts wrap `swift sft` / `swift infer` with `--external_plugins 'my_vora_o
 
 ### Training Pipeline
 ```
-VJEPA2 Encoder (frozen) → Merger (LayerNorm→Linear→GELU→Linear) → Qwen3.5 LLM
+VJEPA2 Encoder (frozen) → Merger (LN→Linear→GELU→Linear→GELU→LN→Linear→LN) → Qwen3.5 LLM
 ```
 The merger is the only component trained in Stage 1. Stage 2 adds LoRA adapters to the LLM.
 
