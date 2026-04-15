@@ -171,6 +171,12 @@ The merger is the only component trained in Stage 1. Stage 2 adds LoRA adapters 
 PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/test_processor.py -v
 ```
 
+모델 모듈(`VJEPA2VisualModule`, `_decode_grid_features`, `_load_visual_weights`, Gemma4 monkey-patch)을 검증한다.
+
+```bash
+PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/test_model.py -v
+```
+
 ### 통합 테스트 (HF Hub 필요)
 
 `from_pretrained` 경로를 통해 실제 사용 경로를 검증한다.
@@ -196,6 +202,7 @@ HF_HUB_OFFLINE=1 PYTHONPATH=my_vora_omni python -m pytest my_vora_omni/tests/ -v
 |---|---|---|
 | `tests/test_processor.py` | 단위 | 전처리 shape/token/padding 검증, 직접 인스턴스화 |
 | `tests/test_processor_integration.py` | 통합 (`@pytest.mark.integration`) | `from_pretrained` 경로, sub-processor 타입, 처리 결과 검증 |
+| `tests/test_model.py` | 단위 | `VJEPA2VisualModule`, `_decode_grid_features`, `_load_visual_weights`, Gemma4 monkey-patch 검증 |
 
 ---
 

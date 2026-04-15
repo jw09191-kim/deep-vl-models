@@ -37,66 +37,15 @@ Gemma4TextModel.get_per_layer_inputs = _gemma4_safe_get_per_layer_inputs
 
 
 class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
-    
+
     def get_image_features(self, pixel_values, image_grid_thw, **kwargs):
-        merge_size = self.config.vision_config.spatial_merge_size
-        pps        = self.visual.patches_per_side   # patches-per-side per tile
-        ppt        = pps * pps                      # patches per tile
-
-        # 모든 항목(타일 또는 비디오 클립)을 한 번에 인코딩
-        image_embeds = self.visual(pixel_values)    # [total_items, patches, D]
-
-        results     = []
-        item_offset = 0   # image_embeds 첫 번째 차원 인덱스
-
-        for grid_idx in range(image_grid_thw.shape[0]):
-            t, h, w = image_grid_thw[grid_idx].tolist()
-
-            if t == 1:   # 이미지 — 타일링 지원
-                n_tiles = (h * w) // ppt
-
-                if n_tiles == 1:
-                    embeds = image_embeds[item_offset]  # [h*w, D]
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
-                    # tiles: [n_tiles, pps*pps, D]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    # [n_rows, n_cols, pps, pps, D] → [h, w, D]
-                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
-                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
-                    assembled = assembled.reshape(h, w, -1)
-                    embeds    = assembled.reshape(h * w, -1)
-
-                item_offset += n_tiles
-
-            else:   # 비디오 — dynamic spatial tiling 지원
-                n_tiles = (h * w) // ppt
-
-                if n_tiles == 1:
-                    # 단일 타일: [t*pps², D] → [t*h*w, D]
-                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
-                    item_offset += 1
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]  # [n_tiles, t*pps², D]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
-                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()   # [t, n_rows, pps, n_cols, pps, D]
-                    embeds = tiles.reshape(t * h * w, -1)
-                    item_offset += n_tiles
-
-            # 공간 merge (이미지/비디오 공통)
-            embeds = embeds.view(t, h // merge_size, merge_size,
-                                 w // merge_size, merge_size, -1)
-            embeds = embeds.permute(0, 1, 3, 2, 4, 5)
-            embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size),
-                                    merge_size ** 2 * embeds.shape[-1])
-            embeds = embeds.to(self.visual.dtype)
-            embeds = self.visual.merger(embeds)
-            results.append(embeds)
-
-        return BaseModelOutputWithPooling(pooler_output=tuple(results))
+        image_embeds = self.visual(pixel_values)
+        return _decode_grid_features(
+            image_embeds, image_grid_thw,
+            self.visual.patches_per_side,
+            self.config.vision_config.spatial_merge_size,
+            self.visual,
+        )
 
     def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
         return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)
@@ -150,6 +99,80 @@ class VJEPA2VisualModule(nn.Module):
                 out = self.encoder(pixel_values)
             out = out.last_hidden_state
         return out
+
+
+# ──────────────────────────────────────────────
+# 공유 헬퍼
+# ──────────────────────────────────────────────
+
+def _decode_grid_features(image_embeds, grid_thw, pps, merge_size, visual):
+    """타일 조립 + 공간 merge → merger 통과.
+
+    Args:
+        image_embeds: encoder 출력 [total_items, patches, D]
+        grid_thw:     각 항목의 (t, h, w) 텐서 [N, 3]
+        pps:          patches_per_side (타일 한 변의 패치 수)
+        merge_size:   공간 merge 크기 (보통 2)
+        visual:       VJEPA2VisualModule (dtype, merger 접근용)
+
+    Returns:
+        BaseModelOutputWithPooling(pooler_output=tuple of [t, tokens, D] tensors)
+    """
+    ppt = pps * pps
+    results = []
+    item_offset = 0
+
+    for grid_idx in range(grid_thw.shape[0]):
+        t, h, w = grid_thw[grid_idx].tolist()
+        n_tiles = (h * w) // ppt
+
+        if t == 1:  # 이미지 — 타일링 지원
+            if n_tiles == 1:
+                embeds = image_embeds[item_offset]
+            else:
+                tiles = image_embeds[item_offset:item_offset + n_tiles]
+                n_rows, n_cols = h // pps, w // pps
+                grid = tiles.view(n_rows, n_cols, pps, pps, -1)
+                embeds = grid.permute(0, 2, 1, 3, 4).contiguous().reshape(h * w, -1)
+        else:  # 비디오 — dynamic spatial tiling 지원
+            if n_tiles == 1:
+                embeds = image_embeds[item_offset].reshape(t * h * w, -1)
+            else:
+                tiles = image_embeds[item_offset:item_offset + n_tiles]  # [n_tiles, t*pps², D]
+                n_rows, n_cols = h // pps, w // pps
+                tiles = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
+                tiles = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()   # [t, n_rows, pps, n_cols, pps, D]
+                embeds = tiles.reshape(t * h * w, -1)
+
+        item_offset += n_tiles
+
+        # 공간 merge (이미지/비디오 공통)
+        embeds = embeds.view(t, h // merge_size, merge_size,
+                             w // merge_size, merge_size, -1)
+        embeds = embeds.permute(0, 1, 3, 2, 4, 5)
+        embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size),
+                                merge_size ** 2 * embeds.shape[-1])
+        embeds = embeds.to(visual.dtype)
+        embeds = visual.merger(embeds)
+        results.append(embeds)
+
+    return BaseModelOutputWithPooling(pooler_output=tuple(results))
+
+
+def _load_visual_weights(visual, ckpt_file, key_prefix, device, dtype):
+    """safetensors에서 visual 가중치를 로드해 visual 모듈에 적용한다."""
+    if not os.path.exists(ckpt_file):
+        return
+    visual_state = {}
+    with safe_open(ckpt_file, framework="pt") as f:
+        for k in f.keys():
+            if k.startswith(key_prefix):
+                visual_state[k[len(key_prefix):]] = f.get_tensor(k).to(device=device, dtype=dtype)
+    if visual_state:
+        missing, _ = visual.load_state_dict(visual_state, strict=False)
+        print(f"visual weights loaded: {len(visual_state)} keys")
+        print(f"missing: {missing}")
+
 
 class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     VISION_MODEL_ID = None
@@ -233,9 +256,6 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         kwargs.setdefault("ignore_mismatched_sizes", True)
         model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        # model.config.use_cache = True
-        # model.config.text_config.use_cache = True
-        # model.model.language_model.config.use_cache = True
 
         vjepa2           = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
         vjepa_dim        = vjepa2.config.hidden_size
@@ -251,21 +271,13 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
             patches_per_side=patches_per_side,
         ).to(device=device, dtype=dtype)
 
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("model.visual."):
-                        new_k = k.replace("model.visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                # strict=False: encoder weight는 VISION_MODEL_ID에서 이미 로드됨
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
-                print(f"missing: {missing}")
+        _load_visual_weights(
+            visual,
+            os.path.join(pretrained_model_name_or_path, "model.safetensors"),
+            "model.visual.",
+            device, dtype,
+        )
 
-        # VJEPA2 encoder freeze
         for param in visual.encoder.parameters():
             param.requires_grad = False
 
@@ -312,17 +324,12 @@ class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
             patches_per_side=patches_per_side,
         ).to(device=device, dtype=dtype)
 
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("model.visual."):
-                        new_k = k.replace("model.visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
+        _load_visual_weights(
+            visual,
+            os.path.join(pretrained_model_name_or_path, "model.safetensors"),
+            "model.visual.",
+            device, dtype,
+        )
 
         for param in visual.encoder.parameters():
             param.requires_grad = False
@@ -352,59 +359,13 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
     VISION_MODEL_ID = None
 
     def get_image_features(self, pixel_values, image_grid_thw, image_position_ids=None, **kwargs):
-        merge_size = self.config.vision_config.spatial_merge_size
-        pps        = self.visual.patches_per_side
-        ppt        = pps * pps
-
-        image_embeds = self.visual(pixel_values)    # [total_items, patches, D]
-
-        results     = []
-        item_offset = 0
-
-        for grid_idx in range(image_grid_thw.shape[0]):
-            t, h, w = image_grid_thw[grid_idx].tolist()
-
-            if t == 1:
-                n_tiles = (h * w) // ppt
-
-                if n_tiles == 1:
-                    embeds = image_embeds[item_offset]
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
-                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
-                    assembled = assembled.reshape(h, w, -1)
-                    embeds    = assembled.reshape(h * w, -1)
-
-                item_offset += n_tiles
-
-            else:   # 비디오 — dynamic spatial tiling 지원
-                n_tiles = (h * w) // ppt
-
-                if n_tiles == 1:
-                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
-                    item_offset += 1
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]  # [n_tiles, t*pps², D]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
-                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()   # [t, n_rows, pps, n_cols, pps, D]
-                    embeds = tiles.reshape(t * h * w, -1)
-                    item_offset += n_tiles
-
-            embeds = embeds.view(t, h // merge_size, merge_size,
-                                 w // merge_size, merge_size, -1)
-            embeds = embeds.permute(0, 1, 3, 2, 4, 5)
-            embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size),
-                                    merge_size ** 2 * embeds.shape[-1])
-            embeds = embeds.to(self.visual.dtype)
-            embeds = self.visual.merger(embeds)
-            results.append(embeds)
-
-        return BaseModelOutputWithPooling(pooler_output=tuple(results))
+        image_embeds = self.visual(pixel_values)
+        return _decode_grid_features(
+            image_embeds, image_grid_thw,
+            self.visual.patches_per_side,
+            self.config.vision_config.spatial_merge_size,
+            self.visual,
+        )
 
     def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
         return self.get_image_features(pixel_values_videos, video_grid_thw, **kwargs)
@@ -515,18 +476,12 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
         ).to(device=device, dtype=dtype)
 
         # visual은 outer class에 직접 붙으므로 key prefix = "visual." (Qwen은 "model.visual.")
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("visual."):
-                        new_k = k.replace("visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
-                print(f"missing: {missing}")
+        _load_visual_weights(
+            visual,
+            os.path.join(pretrained_model_name_or_path, "model.safetensors"),
+            "visual.",
+            device, dtype,
+        )
 
         for param in visual.encoder.parameters():
             param.requires_grad = False
@@ -571,17 +526,12 @@ class Gemma4VJEPA21Model(Gemma4VJEPAModel):
             patches_per_side=patches_per_side,
         ).to(device=device, dtype=dtype)
 
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("visual."):
-                        new_k = k.replace("visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
+        _load_visual_weights(
+            visual,
+            os.path.join(pretrained_model_name_or_path, "model.safetensors"),
+            "visual.",
+            device, dtype,
+        )
 
         for param in visual.encoder.parameters():
             param.requires_grad = False

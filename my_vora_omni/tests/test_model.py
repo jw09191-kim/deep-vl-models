@@ -34,6 +34,8 @@ from src.model.model import (
     Gemma4VJEPA21GModel,
     _gemma4_safe_get_per_layer_inputs,
     _gemma4_orig_get_per_layer_inputs,
+    _decode_grid_features,
+    _load_visual_weights,
 )
 
 
@@ -570,3 +572,131 @@ class TestModelVariantAttributes:
         assert cls.TORCH_HUB_NAME == expected_hub_name, (
             f"{cls.__name__}.TORCH_HUB_NAME={cls.TORCH_HUB_NAME!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 7. _decode_grid_features — 직접 호출 테스트
+# ---------------------------------------------------------------------------
+
+class TestDecodeGridFeaturesDirect:
+    """
+    _decode_grid_features 헬퍼를 직접 호출해 shape/타입을 검증한다.
+    pps=4, merge_size=2 고정.
+    """
+
+    PPS = 4
+    MERGE = 2
+    D = 64
+    LLM_DIM = 32
+
+    @pytest.fixture(autouse=True)
+    def visual(self):
+        self._visual = FakeVisual(self.PPS, self.D, self.MERGE, self.LLM_DIM)
+
+    def _call(self, image_embeds, grid_thw):
+        return _decode_grid_features(
+            image_embeds, grid_thw,
+            self.PPS, self.MERGE, self._visual,
+        )
+
+    def test_returns_base_model_output(self):
+        out = self._call(torch.randn(1, 16, self.D), torch.tensor([[1, 4, 4]]))
+        assert isinstance(out, BaseModelOutputWithPooling)
+
+    def test_image_single_tile(self):
+        """t=1, h=w=4 (1 tile). output: [1, (4//2)²=4, LLM_DIM]"""
+        out = self._call(torch.randn(1, 16, self.D), torch.tensor([[1, 4, 4]]))
+        t, tokens, d = out.pooler_output[0].shape
+        assert (t, tokens, d) == (1, 4, self.LLM_DIM)
+
+    def test_image_multi_tile(self):
+        """t=1, h=w=8 (4 tiles). output: [1, (8//2)²=16, LLM_DIM]"""
+        out = self._call(torch.randn(4, 16, self.D), torch.tensor([[1, 8, 8]]))
+        t, tokens, d = out.pooler_output[0].shape
+        assert (t, tokens, d) == (1, 16, self.LLM_DIM)
+
+    def test_video_single_tile(self):
+        """t=2, h=w=4 (1 tile). patches per item = t*pps²=32. output: [2, 4, LLM_DIM]"""
+        out = self._call(torch.randn(1, 32, self.D), torch.tensor([[2, 4, 4]]))
+        t, tokens, d = out.pooler_output[0].shape
+        assert (t, tokens, d) == (2, 4, self.LLM_DIM)
+
+    def test_video_multi_tile(self):
+        """t=2, h=w=8 (4 tiles). patches per tile = 32. output: [2, 16, LLM_DIM]"""
+        out = self._call(torch.randn(4, 32, self.D), torch.tensor([[2, 8, 8]]))
+        t, tokens, d = out.pooler_output[0].shape
+        assert (t, tokens, d) == (2, 16, self.LLM_DIM)
+
+    def test_image_video_mixed_batch(self):
+        """img(1 tile) + video(4 tiles) 혼합 → pooler_output 길이 2."""
+        image_embeds = torch.randn(5, 16, self.D)  # 1 + 4
+        grid_thw = torch.tensor([[1, 4, 4], [2, 8, 8]])
+        out = self._call(image_embeds, grid_thw)
+        assert len(out.pooler_output) == 2
+        assert out.pooler_output[0].shape == (1, 4, self.LLM_DIM)
+        assert out.pooler_output[1].shape == (2, 16, self.LLM_DIM)
+
+    @pytest.mark.parametrize("h,w,t,n_tiles", [
+        (4, 4, 1, 1),
+        (8, 4, 1, 2),
+        (4, 8, 1, 2),
+        (8, 8, 1, 4),
+        (4, 4, 2, 1),
+        (8, 8, 4, 4),
+    ])
+    def test_token_count_formula(self, h, w, t, n_tiles):
+        """tokens == (h // merge) * (w // merge) for all combinations."""
+        patches = t * self.PPS ** 2
+        image_embeds = torch.randn(n_tiles, patches, self.D)
+        out = self._call(image_embeds, torch.tensor([[t, h, w]]))
+        expected = (h // self.MERGE) * (w // self.MERGE)
+        assert out.pooler_output[0].shape[1] == expected
+
+
+# ---------------------------------------------------------------------------
+# 8. _load_visual_weights — safetensors 로드 테스트
+# ---------------------------------------------------------------------------
+
+class TestLoadVisualWeights:
+    """_load_visual_weights 헬퍼를 tmpdir + safetensors 파일로 검증."""
+
+    def _make_visual(self):
+        return FakeVisual(pps=4, vjepa_dim=8, merge_size=2, llm_dim=4)
+
+    def test_no_op_when_file_missing(self, tmp_path):
+        """ckpt_file 이 없으면 visual 상태 변화 없음."""
+        visual = self._make_visual()
+        before = {k: v.clone() for k, v in visual.state_dict().items()}
+        _load_visual_weights(visual, str(tmp_path / "missing.safetensors"), "visual.", "cpu", torch.float32)
+        for k, v in visual.state_dict().items():
+            assert torch.equal(v, before[k])
+
+    def test_loads_matching_keys(self, tmp_path):
+        """prefix가 일치하는 key만 로드되고 merger 가중치가 교체된다."""
+        from safetensors.torch import save_file
+        visual = self._make_visual()
+        # merger.weight shape 확인
+        w_shape = visual.merger.weight.shape  # [llm_dim, in_dim]
+        new_weight = torch.ones(w_shape)
+
+        ckpt = tmp_path / "model.safetensors"
+        save_file({"visual.merger.weight": new_weight}, str(ckpt))
+
+        _load_visual_weights(visual, str(ckpt), "visual.", "cpu", torch.float32)
+        assert torch.equal(visual.merger.weight, new_weight)
+
+    def test_ignores_non_matching_keys(self, tmp_path):
+        """prefix가 다른 key는 무시되고 visual 상태 변화 없음."""
+        from safetensors.torch import save_file
+        visual = self._make_visual()
+        before = {k: v.clone() for k, v in visual.state_dict().items()}
+        w_shape = visual.merger.weight.shape
+        new_weight = torch.ones(w_shape) * 99
+
+        ckpt = tmp_path / "model.safetensors"
+        save_file({"model.visual.merger.weight": new_weight}, str(ckpt))
+
+        # prefix="visual." → "model.visual.*" 키는 매칭 안 됨
+        _load_visual_weights(visual, str(ckpt), "visual.", "cpu", torch.float32)
+        for k, v in visual.state_dict().items():
+            assert torch.equal(v, before[k])

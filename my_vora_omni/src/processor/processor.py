@@ -46,11 +46,7 @@ class VoRAVisionConfig:
             self.patch_size = cfg.patch_size
             self.tubelet_size = cfg.tubelet_size
             self.hidden_size = cfg.hidden_size
-            self.tokens_per_image = (self.image_size // self.patch_size) ** 2
 
-
-VJEPA2L_CFG = VoRAVisionConfig("facebook/vjepa2-vitl-fpc64-256")
-VJEPA2G_CFG = VoRAVisionConfig("facebook/vjepa2-vitg-fpc64-256")
 
 
 def _select_tile_layout(orig_h: int, orig_w: int, max_tiles: int):
@@ -341,10 +337,6 @@ class Gemma4VJEPAImageProcessor(VJEPAImageMixin, Gemma4ImageProcessor):
 
         kwargs.setdefault("image_mean", cfg.MEAN)
         kwargs.setdefault("image_std", cfg.STD)
-        kwargs.setdefault("do_rescale", True)
-        kwargs.setdefault("rescale_factor", 1 / 255.0)
-        kwargs.setdefault("do_normalize", True)
-        kwargs.setdefault("do_resize", True)
         kwargs.setdefault("patch_size", cfg.patch_size)
         # Gemma4ImageProcessor.__init__이 max_soft_tokens 유효성 검사를 하므로
         # _SUPPORTED_SOFT_TOKENS 중 최솟값(70)을 전달 (실제 처리엔 미사용)
@@ -376,10 +368,6 @@ class Gemma4VJEPAVideoProcessor(VJEPAVideoMixin, Gemma4VideoProcessor):
 
         kwargs.setdefault("image_mean", cfg.MEAN)
         kwargs.setdefault("image_std", cfg.STD)
-        kwargs.setdefault("do_rescale", True)
-        kwargs.setdefault("rescale_factor", 1 / 255.0)
-        kwargs.setdefault("do_normalize", True)
-        kwargs.setdefault("do_resize", True)
         kwargs.setdefault("patch_size", cfg.patch_size)
         kwargs.setdefault("max_soft_tokens", 70)
 
