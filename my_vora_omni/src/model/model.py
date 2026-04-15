@@ -182,6 +182,60 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         super().__init__(config)
         self.model = Qwen3_5VJEPAInnerModel(config)
 
+    def forward(
+        self,
+        input_ids=None,
+        pixel_values=None,
+        image_grid_thw=None,
+        pixel_values_videos=None,
+        video_grid_thw=None,
+        inputs_embeds=None,
+        attention_mask=None,
+        **kwargs,
+    ):
+        has_visual = (
+            (pixel_values is not None and image_grid_thw is not None)
+            or (pixel_values_videos is not None and video_grid_thw is not None)
+        )
+
+        if has_visual and inputs_embeds is None and input_ids is not None:
+            inputs_embeds = self.model.get_input_embeddings()(input_ids)
+
+            if pixel_values is not None and image_grid_thw is not None:
+                image_output = self.model.get_image_features(pixel_values, image_grid_thw)
+                # pooler_output: tuple of [t, tokens_i, D] — 이미지마다 tokens_i가 다를 수 있으므로
+                # 각각 flatten 후 cat (native torch.cat(dim=0)은 dim=1 불일치로 실패)
+                image_embeds = torch.cat(
+                    [e.reshape(-1, e.shape[-1]) for e in image_output.pooler_output], dim=0
+                ).to(inputs_embeds.device, inputs_embeds.dtype)
+                image_mask, _ = self.model.get_placeholder_mask(
+                    input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
+                )
+                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+            if pixel_values_videos is not None and video_grid_thw is not None:
+                video_output = self.model.get_video_features(pixel_values_videos, video_grid_thw)
+                video_embeds = torch.cat(
+                    [e.reshape(-1, e.shape[-1]) for e in video_output.pooler_output], dim=0
+                ).to(inputs_embeds.device, inputs_embeds.dtype)
+                _, video_mask = self.model.get_placeholder_mask(
+                    input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
+                )
+                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
+
+            input_ids = None  # inputs_embeds로 전환
+
+        return super().forward(
+            input_ids=input_ids,
+            pixel_values=None,           # 이미 VJEPA로 처리 완료 — native vision path 차단
+            pixel_values_videos=None,    # 이미 VJEPA로 처리 완료 — native vision path 차단
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            inputs_embeds=inputs_embeds,
+            attention_mask=attention_mask,
+            **kwargs,
+        )
+
     def _validate_model_kwargs(self, model_kwargs):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
