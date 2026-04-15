@@ -377,9 +377,10 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
 
         return super().forward(
             input_ids=input_ids,
+            pixel_values=None,           # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
+            pixel_values_videos=None,    # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            # pixel_values / pixel_values_videos: 이미 주입 완료 → parent에 전달 안 함
             **kwargs,
         )
 
@@ -438,7 +439,13 @@ class Gemma4VJEPA21Model(Gemma4VJEPAModel):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         kwargs.setdefault("ignore_mismatched_sizes", True)
-        model = Gemma4ForConditionalGeneration.from_pretrained(
+        # super(Gemma4VJEPAModel, cls) resolves to Gemma4ForConditionalGeneration in MRO,
+        # but propagates cls (e.g. Gemma4VJEPA21LModel) as the classmethod receiver so
+        # HuggingFace instantiates cls(config) — the correct type from the start.
+        # This avoids the model.__class__ = cls patch which was applied too late:
+        # HF sets model.__dict__['forward'] to a decorated GFCGen.forward during loading,
+        # and instance __dict__ takes priority over class MRO — so the patch never took effect.
+        model = super(Gemma4VJEPAModel, cls).from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs)
         model.config.vision_config.spatial_merge_size = 2
 
@@ -471,10 +478,6 @@ class Gemma4VJEPA21Model(Gemma4VJEPAModel):
             param.requires_grad = False
 
         model.visual = visual
-        model.__class__ = cls
-
-        target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = model.to(target_device)
         return model
 
 
