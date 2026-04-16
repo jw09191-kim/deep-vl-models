@@ -51,12 +51,15 @@ def load_model(checkpoint: str, encoder: str, device: str = "cuda"):
 
 def _post_process(text: str) -> str:
     # <think>...</think> 블록 제거 (enable_thinking=False여도 간혹 누출)
+    # <think>...</think> 블록 제거
     text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # URL 제거 (http/https/ftp/www 형태 모두 포함)
+    text = re.sub(r'https?://\S+|ftp://\S+|www\.\S+', '', text)
     # 앞뒤 공백 제거
     text = text.strip()
     # 3개 이상 연속 줄바꿈 → 2개로 축약
     text = re.sub(r'\n{3,}', '\n\n', text)
-    # 문장 내 과도한 공백 정리
+    # 문장 내 과도한 공백 정리 (URL 제거 후 빈 자리도 처리)
     text = re.sub(r'[ \t]{2,}', ' ', text)
     return text
 
