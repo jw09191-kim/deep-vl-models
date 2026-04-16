@@ -298,7 +298,18 @@ class Qwen3VLVJEPAProcessor(Qwen3VLProcessor):
             tokenizer=tokenizer,
             video_processor=video_processor,
             chat_template=chat_template,
+            **kwargs,
         )
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        processor = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        # from_pretrained이 checkpoint의 preprocessor_config.json을 읽어
+        # 원본 Qwen VL processor를 __init__ 이후 속성으로 덮어쓸 수 있다.
+        # 항상 VJEPA processor로 교체해 checkpoint/base model 어디서 로드해도 동작하게 한다.
+        processor.image_processor = VJEPAImageProcessor(cls.VISION_MODEL_ID)
+        processor.video_processor = VJEPAVideoProcessor(cls.VISION_MODEL_ID)
+        return processor
 
 
 class Qwen3VLVJepa2LProcessor(Qwen3VLVJEPAProcessor):
@@ -562,6 +573,13 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
             image_seq_length=image_seq_length,
             **kwargs,
         )
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        processor = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+        processor.image_processor = Gemma4VJEPAImageProcessor(cls.VISION_MODEL_ID)
+        processor.video_processor = Gemma4VJEPAVideoProcessor(cls.VISION_MODEL_ID)
+        return processor
 
 
 class Gemma4VJepa2LProcessor(Gemma4VJEPAProcessor):
