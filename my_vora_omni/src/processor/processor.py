@@ -303,13 +303,13 @@ class Qwen3VLVJEPAProcessor(Qwen3VLProcessor):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        processor = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        # from_pretrained이 checkpoint의 preprocessor_config.json을 읽어
-        # 원본 Qwen VL processor를 __init__ 이후 속성으로 덮어쓸 수 있다.
-        # 항상 VJEPA processor로 교체해 checkpoint/base model 어디서 로드해도 동작하게 한다.
-        processor.image_processor = VJEPAImageProcessor(cls.VISION_MODEL_ID)
-        processor.video_processor = VJEPAVideoProcessor(cls.VISION_MODEL_ID)
-        return processor
+        from transformers import AutoTokenizer
+        # image/video processor는 __init__에서 항상 VJEPA로 새로 생성.
+        # preprocessor_config.json의 커스텀 클래스를 AutoImageProcessor가
+        # 인식하지 못해 super().from_pretrained()이 실패하므로,
+        # tokenizer만 직접 로드하고 cls()로 조립한다.
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        return cls(tokenizer=tokenizer)
 
 
 class Qwen3VLVJepa2LProcessor(Qwen3VLVJEPAProcessor):
@@ -576,10 +576,9 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        processor = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        processor.image_processor = Gemma4VJEPAImageProcessor(cls.VISION_MODEL_ID)
-        processor.video_processor = Gemma4VJEPAVideoProcessor(cls.VISION_MODEL_ID)
-        return processor
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, **kwargs)
+        return cls(tokenizer=tokenizer)
 
 
 class Gemma4VJepa2LProcessor(Gemma4VJEPAProcessor):
