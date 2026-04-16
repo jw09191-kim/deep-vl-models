@@ -220,6 +220,18 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
                 )
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
+            # input_ids를 None으로 전환하기 전에 mrope position_ids 계산.
+            # parent forward()는 input_ids=None이면 get_rope_index()를 올바르게
+            # 호출할 수 없어 모든 토큰에 1D 순차 position_ids가 부여된다.
+            if 'position_ids' not in kwargs:
+                position_ids, _ = self.get_rope_index(
+                    input_ids,
+                    image_grid_thw if pixel_values is not None else None,
+                    video_grid_thw if pixel_values_videos is not None else None,
+                    attention_mask,
+                )
+                kwargs['position_ids'] = position_ids
+
             input_ids = None  # inputs_embeds로 전환
 
         return super().forward(
