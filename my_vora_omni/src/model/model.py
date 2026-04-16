@@ -162,6 +162,7 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     def _validate_model_kwargs(self, model_kwargs):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
+        model_kwargs.pop("mm_token_type_ids", None)
         super()._validate_model_kwargs(model_kwargs)
 
     def forward(
@@ -491,6 +492,7 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
     def _validate_model_kwargs(self, model_kwargs):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
+        model_kwargs.pop("mm_token_type_ids", None)
         # image_grid_thw / video_grid_thw는 forward()가 직접 소비하므로 제거하지 않음
         super()._validate_model_kwargs(model_kwargs)
 
