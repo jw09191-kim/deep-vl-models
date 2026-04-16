@@ -233,7 +233,11 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
                 if vid_id is not None:
                     mm_token_type_ids[input_ids == vid_id] = 2
 
-            input_ids = None  # inputs_embeds로 전환
+            # input_ids를 None으로 클리어하지 않는다.
+            # compute_3d_position_ids(input_ids=None)이면 None을 반환해
+            # mrope 좌표가 계산되지 않기 때문이다.
+            # 부모 forward()는 inputs_embeds가 있으면 input_ids로 re-embedding하지 않고,
+            # input_ids는 오직 position_ids 계산에만 사용한다.
 
         return super().forward(
             input_ids=input_ids,
