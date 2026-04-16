@@ -162,7 +162,7 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     def _validate_model_kwargs(self, model_kwargs):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
-        model_kwargs.pop("mm_token_type_ids", None)
+        # mm_token_type_ids는 forward()의 explicit param이므로 pop 불필요
         super()._validate_model_kwargs(model_kwargs)
 
     def forward(
@@ -174,6 +174,7 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         video_grid_thw=None,
         inputs_embeds=None,
         attention_mask=None,
+        mm_token_type_ids=None,
         **kwargs,
     ):
         has_visual = (
@@ -220,25 +221,29 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
                 )
                 inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
 
-            # input_ids를 None으로 전환하기 전에 mrope position_ids 계산.
-            # parent forward()는 input_ids=None이면 get_rope_index()를 올바르게
-            # 호출할 수 없어 모든 토큰에 1D 순차 position_ids가 부여된다.
-            if 'position_ids' not in kwargs:
-                position_ids, _ = self.get_rope_index(
-                    input_ids,
-                    image_grid_thw if pixel_values is not None else None,
-                    video_grid_thw if pixel_values_videos is not None else None,
-                    attention_mask,
-                )
-                kwargs['position_ids'] = position_ids
+            # parent의 compute_3d_position_ids가 올바른 mrope 좌표를 계산하려면
+            # mm_token_type_ids가 필요하다. Swift/processor가 전달하지 않는 경우
+            # (훈련 배치 또는 generate())에는 input_ids에서 직접 재구성한다.
+            if mm_token_type_ids is None:
+                mm_token_type_ids = torch.zeros_like(input_ids)
+                img_id = getattr(self.config, 'image_token_id', None)
+                vid_id = getattr(self.config, 'video_token_id', None)
+                if img_id is not None:
+                    mm_token_type_ids[input_ids == img_id] = 1
+                if vid_id is not None:
+                    mm_token_type_ids[input_ids == vid_id] = 2
 
             input_ids = None  # inputs_embeds로 전환
 
         return super().forward(
             input_ids=input_ids,
+            pixel_values=None,            # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
+            pixel_values_videos=None,     # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
+            image_grid_thw=image_grid_thw,   # compute_3d_position_ids에 필요
+            video_grid_thw=video_grid_thw,   # compute_3d_position_ids에 필요
+            mm_token_type_ids=mm_token_type_ids,  # compute_3d_position_ids에 필요
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            # pixel_values / pixel_values_videos 전달 안 함 (이미 주입 완료)
             **kwargs,
         )
 
