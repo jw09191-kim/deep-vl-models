@@ -192,6 +192,8 @@ class VJEPAVideoProcessor(Qwen3VLVideoProcessor):
 
         self.max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
         self.max_frames = (self.max_frames // self.tubelet_size) * self.tubelet_size
+        # BaseVideoProcessor.sample_frames는 self.num_frames를 기본 프레임 수로 사용
+        self.num_frames = max(self.tubelet_size, self.max_frames)
 
     def sample_frames(self, metadata, num_frames=None, fps=None, **kwargs):
         total = metadata.total_num_frames

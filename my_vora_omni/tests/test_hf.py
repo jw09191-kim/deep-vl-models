@@ -89,7 +89,12 @@ def main():
     parser.add_argument("--base_model", default="Qwen/Qwen3.5-0.8B", help="Base model path for processor")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max_new_tokens", type=int, default=256)
+    parser.add_argument("--nframes", type=int, default=32, help="Max video frames (must match FPS_MAX_FRAMES used at training)")
     args = parser.parse_args()
+
+    # FPS_MAX_FRAMES는 VJEPAVideoProcessor.__init__에서 self.num_frames를 결정하므로
+    # 프로세서 생성 전에 설정해야 합니다.
+    os.environ["FPS_MAX_FRAMES"] = str(args.nframes)
 
     print(f"Loading model from {args.checkpoint} (encoder={args.encoder})...")
     model, processor = load_model(args.checkpoint, args.encoder, base_model_path=args.base_model, device=args.device)
@@ -132,7 +137,7 @@ def main():
         messages = [{
             "role": "user",
             "content": [
-                {"type": "video", "video": video_path},
+                {"type": "video", "video": video_path, "nframes": args.nframes},
                 {"type": "text", "text": "Describe this video."},
             ],
         }]
@@ -150,7 +155,7 @@ def main():
             "role": "user",
             "content": [
                 {"type": "image", "image": image_path},
-                {"type": "video", "video": video_path},
+                {"type": "video", "video": video_path, "nframes": args.nframes},
                 {"type": "text", "text": "Compare the image and the video."},
             ],
         }]
