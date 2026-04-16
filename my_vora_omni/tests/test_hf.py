@@ -1,7 +1,7 @@
 """
 VoRA Qwen3.5 — standalone inference test
 Usage:
-    python test_infer.py <checkpoint_path> [--encoder vitl|vitg]
+    python -m my_vora_omni.tests.test_hf <checkpoint_path> [--encoder vitl|vitg]
 """
 import argparse
 import sys
@@ -26,7 +26,7 @@ from src.processor import (
 )
 
 
-def load_model(checkpoint: str, encoder: str, base_model_path: str = "Qwen/Qwen3.5-0.8B", device: str = "cuda"):
+def load_model(checkpoint: str, encoder: str, device: str = "cuda"):
     MODEL_MAP = {
         "vitb": (Qwen3_5VJEPA21BModel, Qwen3VLVJepa21BProcessor),
         "vitl": (Qwen3_5VJEPALModel, Qwen3VLVJepa2LProcessor),
@@ -40,11 +40,7 @@ def load_model(checkpoint: str, encoder: str, base_model_path: str = "Qwen/Qwen3
 
     ModelCls, ProcCls = MODEL_MAP[encoder]
 
-    # 주의: Processor는 체크포인트가 아닌 원본 Base 모델 경로에서 불러옵니다.
-    # Base 모델 경로를 사용하시는 실제 Qwen 모델 경로로 맞춰주세요.
-    processor = ProcCls.from_pretrained(base_model_path, trust_remote_code=True)
-
-    # 모델 가중치는 병합된 체크포인트에서 불러옵니다.
+    processor = ProcCls.from_pretrained(checkpoint, trust_remote_code=True)
     model = ModelCls.from_pretrained(
         checkpoint,
         torch_dtype=torch.bfloat16,
@@ -86,7 +82,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("checkpoint", help="Path to merged checkpoint")
     parser.add_argument("--encoder", default="vitl", choices=["vitb", "vitl", "vitg", "vjepa21l", "vjepa21g"])
-    parser.add_argument("--base_model", default="Qwen/Qwen3.5-0.8B", help="Base model path for processor")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--max_new_tokens", type=int, default=256)
     parser.add_argument("--nframes", type=int, default=32, help="Max video frames (must match FPS_MAX_FRAMES used at training)")
@@ -97,72 +92,32 @@ def main():
     os.environ["FPS_MAX_FRAMES"] = str(args.nframes)
 
     print(f"Loading model from {args.checkpoint} (encoder={args.encoder})...")
-    model, processor = load_model(args.checkpoint, args.encoder, base_model_path=args.base_model, device=args.device)
+    model, processor = load_model(args.checkpoint, args.encoder, device=args.device)
     print("Model loaded.\n")
 
-    # ── Test 1: Text-only ──────────────────────────────────────
+    # ── Test 3: Video ──────────────────────────────────────────
     print("=" * 60)
-    print("[Test 1] Text-only")
+    print("[Test 3] Video")
     print("=" * 60)
-    messages = [{"role": "user", "content": "Hi, how have you been?"}]
-    response = generate(model, processor, messages, args.max_new_tokens)
-    print(f"Response: {response}\n")
-
-    # ── Test 2: Image ──────────────────────────────────────────
-    print("=" * 60)
-    print("[Test 2] Image")
-    print("=" * 60)
-    image_path = "/home/jw09191/tmp/video/ai_tf/003_video.mp4"
-    if os.path.exists(image_path):
+    video_path = "/home/jw09191/tmp/video/ai_tf/052_2_ybw.mp4"
+    if os.path.exists(video_path):
         messages = [
+            {
+                "role": "system",
+                "content": "You are a highly accurate video analysis AI. You must describe only what is explicitly visible in the video. Do not guess, assume, or hallucinate any details that are not present."
+            },
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": image_path},
-                    {"type": "text", "text": "Describe this image."},
+                    {"type": "video", "video": video_path, "nframes": args.nframes},
+                    {"type": "text", "text": "Please describe the main events and visual details of this video."},
                 ],
             }
         ]
         response = generate(model, processor, messages, args.max_new_tokens)
         print(f"Response: {response}\n")
     else:
-        print(f"Skipped (file not found: {image_path})\n")
-
-    # ── Test 3: Video ──────────────────────────────────────────
-    print("=" * 60)
-    print("[Test 3] Video")
-    print("=" * 60)
-    video_path = "my_vora_omni/examples/01_dog.mp4"
-    if os.path.exists(video_path):
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "video", "video": video_path, "nframes": args.nframes},
-                {"type": "text", "text": "Describe this video."},
-            ],
-        }]
-        response = generate(model, processor, messages, args.max_new_tokens)
-        print(f"Response: {response}\n")
-    else:
         print(f"Skipped (file not found: {video_path})\n")
-
-    # ── Test 4: Image + Video ──────────────────────────────────
-    print("=" * 60)
-    print("[Test 4] Image + Video combined")
-    print("=" * 60)
-    if os.path.exists(image_path) and os.path.exists(video_path):
-        messages = [{
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image_path},
-                {"type": "video", "video": video_path, "nframes": args.nframes},
-                {"type": "text", "text": "Compare the image and the video."},
-            ],
-        }]
-        response = generate(model, processor, messages, args.max_new_tokens)
-        print(f"Response: {response}\n")
-    else:
-        print("Skipped (files not found)\n")
 
     print("All tests done.")
 
