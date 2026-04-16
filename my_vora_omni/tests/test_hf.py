@@ -4,20 +4,17 @@ Usage:
     python -m my_vora_omni.tests.test_hf <checkpoint_path> [--encoder vitl|vitg]
 """
 import argparse
-import sys
 import os
 
-sys.path.insert(0, os.path.abspath('.'))
-
 import torch
-from src.model import (
+from my_vora_omni.src.model import (
     Qwen3_5VJEPALModel,
     Qwen3_5VJEPAGModel,
     Qwen3_5VJEPA21BModel,
     Qwen3_5VJEPA21LModel,
     Qwen3_5VJEPA21GModel
 )
-from src.processor import (
+from my_vora_omni.src.processor import (
     Qwen3VLVJepa2LProcessor,
     Qwen3VLVJepa2GProcessor,
     Qwen3VLVJepa21BProcessor,
