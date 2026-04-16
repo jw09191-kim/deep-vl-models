@@ -5,6 +5,7 @@ Usage:
 """
 import argparse
 import os
+import re
 
 import torch
 from my_vora_omni.src.model import (
@@ -48,6 +49,18 @@ def load_model(checkpoint: str, encoder: str, device: str = "cuda"):
     return model, processor
 
 
+def _post_process(text: str) -> str:
+    # <think>...</think> 블록 제거 (enable_thinking=False여도 간혹 누출)
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    # 앞뒤 공백 제거
+    text = text.strip()
+    # 3개 이상 연속 줄바꿈 → 2개로 축약
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # 문장 내 과도한 공백 정리
+    text = re.sub(r'[ \t]{2,}', ' ', text)
+    return text
+
+
 @torch.no_grad()
 def generate(model, processor, messages, max_new_tokens=256):
     for msg in messages:
@@ -72,7 +85,8 @@ def generate(model, processor, messages, max_new_tokens=256):
 
     # Strip input tokens
     generated_ids = output_ids[:, inputs["input_ids"].shape[1]:]
-    return processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    response = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    return _post_process(response)
 
 
 def main():
