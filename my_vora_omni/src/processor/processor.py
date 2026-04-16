@@ -309,7 +309,14 @@ class Qwen3VLVJEPAProcessor(Qwen3VLProcessor):
         # 인식하지 못해 super().from_pretrained()이 실패하므로,
         # tokenizer만 직접 로드하고 cls()로 조립한다.
         tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(tokenizer=tokenizer)
+        # chat_template은 tokenizer에 저장되어 있으며, 없으면 chat_template.jinja 파일을 직접 읽는다.
+        chat_template = getattr(tokenizer, 'chat_template', None)
+        if chat_template is None:
+            jinja_path = os.path.join(pretrained_model_name_or_path, 'chat_template.jinja')
+            if os.path.exists(jinja_path):
+                with open(jinja_path) as f:
+                    chat_template = f.read()
+        return cls(tokenizer=tokenizer, chat_template=chat_template)
 
 
 class Qwen3VLVJepa2LProcessor(Qwen3VLVJEPAProcessor):
@@ -578,7 +585,13 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         from transformers import AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(pretrained_model_name_or_path, **kwargs)
-        return cls(tokenizer=tokenizer)
+        chat_template = getattr(tokenizer, 'chat_template', None)
+        if chat_template is None:
+            jinja_path = os.path.join(pretrained_model_name_or_path, 'chat_template.jinja')
+            if os.path.exists(jinja_path):
+                with open(jinja_path) as f:
+                    chat_template = f.read()
+        return cls(tokenizer=tokenizer, chat_template=chat_template)
 
 
 class Gemma4VJepa2LProcessor(Gemma4VJEPAProcessor):
