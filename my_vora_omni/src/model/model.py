@@ -94,7 +94,9 @@ class Qwen3_5VJEPAInnerModel(Qwen3_5Model):
                                     merge_size ** 2 * embeds.shape[-1])
             embeds = embeds.to(self.visual.dtype)
             embeds = self.visual.merger(embeds)
-            results.append(embeds)
+            # 부모 forward()가 torch.cat(pooler_output, dim=0)으로 결합하므로
+            # 각 원소를 2D [t*h_merged*w_merged, D]로 reshape해야 한다
+            results.append(embeds.view(-1, embeds.shape[-1]))
 
         return BaseModelOutputWithPooling(pooler_output=tuple(results))
 
@@ -162,99 +164,36 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     def _validate_model_kwargs(self, model_kwargs):
         model_kwargs.pop("num_soft_tokens_per_image", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
-        # mm_token_type_ids는 forward()의 explicit param이므로 pop 불필요
         super()._validate_model_kwargs(model_kwargs)
+
+    def get_image_features(self, pixel_values, image_grid_thw, **kwargs):
+        return self.model.get_image_features(pixel_values, image_grid_thw, **kwargs)
+
+    def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
+        return self.model.get_video_features(pixel_values_videos, video_grid_thw, **kwargs)
 
     def forward(
         self,
         input_ids=None,
-        pixel_values=None,
         image_grid_thw=None,
-        pixel_values_videos=None,
         video_grid_thw=None,
-        inputs_embeds=None,
-        attention_mask=None,
         mm_token_type_ids=None,
         **kwargs,
     ):
-        has_visual = (
-            (pixel_values is not None and image_grid_thw is not None)
-            or (pixel_values_videos is not None and video_grid_thw is not None)
-        )
-
-        if has_visual and inputs_embeds is None and input_ids is not None:
-            inputs_embeds = self.model.language_model.embed_tokens(input_ids)
-
-            if pixel_values is not None and image_grid_thw is not None:
-                n_images = image_grid_thw.shape[0]
-                pps = self.model.visual.patches_per_side
-                image_embeds_list, tile_offset = [], 0
-                for i in range(n_images):
-                    t, h, w = image_grid_thw[i].tolist()
-                    n_tiles = (h * w) // (pps * pps) if t == 1 else 1
-                    pv = pixel_values[tile_offset:tile_offset + n_tiles]
-                    output = self.model.get_image_features(pv, image_grid_thw[i:i + 1])
-                    embeds = output.pooler_output[0]
-                    image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-                    tile_offset += n_tiles
-                image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                image_mask, _ = self.model.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-            if pixel_values_videos is not None and video_grid_thw is not None:
-                n_videos = video_grid_thw.shape[0]
-                pps = self.model.visual.patches_per_side
-                video_embeds_list, tile_offset = [], 0
-                for i in range(n_videos):
-                    t, h, w = video_grid_thw[i].tolist()
-                    n_tiles = (h * w) // (pps * pps)
-                    pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
-                    output = self.model.get_video_features(pv, video_grid_thw[i:i + 1])
-                    embeds = output.pooler_output[0]
-                    video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-                    tile_offset += n_tiles
-                video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                _, video_mask = self.model.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-
-            # compute_3d_position_ids(input_ids=None)은 None을 반환해 mrope가 적용되지
-            # 않는다. input_ids가 살아있는 지금 직접 호출해 position_ids를 만들고,
-            # kwargs에 주입하면 부모 forward()가 position_ids != None을 보고
-            # compute_3d_position_ids를 재호출하지 않는다.
-            if 'position_ids' not in kwargs:
-                if mm_token_type_ids is None:
-                    mm_token_type_ids = torch.zeros_like(input_ids)
-                    img_id = getattr(self.config, 'image_token_id', None)
-                    vid_id = getattr(self.config, 'video_token_id', None)
-                    if img_id is not None:
-                        mm_token_type_ids[input_ids == img_id] = 1
-                    if vid_id is not None:
-                        mm_token_type_ids[input_ids == vid_id] = 2
-
-                position_ids = self.compute_3d_position_ids(
-                    input_ids=input_ids,
-                    image_grid_thw=image_grid_thw,
-                    video_grid_thw=video_grid_thw,
-                    inputs_embeds=inputs_embeds,
-                    attention_mask=attention_mask,
-                    past_key_values=kwargs.get('past_key_values'),
-                    mm_token_type_ids=mm_token_type_ids,
-                )
-                if position_ids is not None:
-                    kwargs['position_ids'] = position_ids
-
-            input_ids = None  # inputs_embeds로 전환
-
+        # compute_3d_position_ids는 mm_token_type_ids가 필수이지만
+        # Swift/processor가 제공하지 않으므로 input_ids에서 재구성한다
+        if mm_token_type_ids is None and input_ids is not None:
+            if image_grid_thw is not None or video_grid_thw is not None:
+                mm_token_type_ids = torch.zeros_like(input_ids)
+                if img_id := getattr(self.config, 'image_token_id', None):
+                    mm_token_type_ids[input_ids == img_id] = 1
+                if vid_id := getattr(self.config, 'video_token_id', None):
+                    mm_token_type_ids[input_ids == vid_id] = 2
         return super().forward(
             input_ids=input_ids,
-            pixel_values=None,            # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
-            pixel_values_videos=None,     # 이미 VJEPA로 처리 완료 — built-in vision tower 차단
-            inputs_embeds=inputs_embeds,
-            attention_mask=attention_mask,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            mm_token_type_ids=mm_token_type_ids,
             **kwargs,
         )
 
