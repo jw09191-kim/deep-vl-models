@@ -227,8 +227,8 @@ register_model_arch(
     MultiModelKeys(
         'gemma4_vjepa',
         language_model=['model.language_model', 'lm_head'],
-        vision_tower=['visual.encoder'],   # outer class에 직접 부착 — "model." prefix 없음
-        aligner=['visual.merger'],
+        vision_tower=['model.visual.encoder'],
+        aligner=['model.visual.merger'],
     )
 )
 
