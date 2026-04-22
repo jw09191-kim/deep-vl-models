@@ -7,7 +7,7 @@ from transformers import AutoModel, Qwen3_5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutputWithPooling
 from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5Model
 from transformers import Gemma4ForConditionalGeneration, Gemma4Config
-from transformers.models.gemma4.modeling_gemma4 import Gemma4TextModel, Gemma4Model
+from transformers.models.gemma4.modeling_gemma4 import Gemma4TextModel
 
 
 # ──────────────────────────────────────────────
@@ -153,6 +153,7 @@ class VJEPA2VisualModule(nn.Module):
 
 class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
     VISION_MODEL_ID = None
+    TORCH_HUB_NAME  = None
 
     def __init__(self, config):
         config.vision_config.spatial_merge_size = 2
@@ -164,279 +165,55 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
         model_kwargs.pop("num_soft_tokens_per_video", None)
         super()._validate_model_kwargs(model_kwargs)
 
+    def get_image_features(self, pixel_values, image_grid_thw, **kwargs):
+        return self.model.get_image_features(pixel_values, image_grid_thw, **kwargs)
+
+    def get_video_features(self, pixel_values_videos, video_grid_thw, **kwargs):
+        return self.model.get_video_features(pixel_values_videos, video_grid_thw, **kwargs)
+
     def forward(
         self,
         input_ids=None,
-        pixel_values=None,
-        image_grid_thw=None,
-        pixel_values_videos=None,
-        video_grid_thw=None,
-        inputs_embeds=None,
         attention_mask=None,
+        position_ids=None,
+        past_key_values=None,
+        inputs_embeds=None,
+        pixel_values=None,
+        pixel_values_videos=None,
+        image_grid_thw=None,
+        video_grid_thw=None,
+        mm_token_type_ids=None,
         **kwargs,
     ):
-        has_visual = (
-            (pixel_values is not None and image_grid_thw is not None)
-            or (pixel_values_videos is not None and video_grid_thw is not None)
-        )
-
-        if has_visual and inputs_embeds is None and input_ids is not None:
-            inputs_embeds = self.model.language_model.embed_tokens(input_ids)
-
-            if pixel_values is not None and image_grid_thw is not None:
-                n_images = image_grid_thw.shape[0]
-                pps = self.model.visual.patches_per_side
-                image_embeds_list, tile_offset = [], 0
-                for i in range(n_images):
-                    t, h, w = image_grid_thw[i].tolist()
-                    n_tiles = (h * w) // (pps * pps) if t == 1 else 1
-                    pv = pixel_values[tile_offset:tile_offset + n_tiles]
-                    output = self.model.get_image_features(pv, image_grid_thw[i:i + 1])
-                    embeds = output.pooler_output[0]
-                    image_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-                    tile_offset += n_tiles
-                image_embeds = torch.cat(image_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                image_mask, _ = self.model.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, image_features=image_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
-
-            if pixel_values_videos is not None and video_grid_thw is not None:
-                n_videos = video_grid_thw.shape[0]
-                pps = self.model.visual.patches_per_side
-                video_embeds_list, tile_offset = [], 0
-                for i in range(n_videos):
-                    t, h, w = video_grid_thw[i].tolist()
-                    n_tiles = (h * w) // (pps * pps)
-                    pv = pixel_values_videos[tile_offset:tile_offset + n_tiles]
-                    output = self.model.get_video_features(pv, video_grid_thw[i:i + 1])
-                    embeds = output.pooler_output[0]
-                    video_embeds_list.append(embeds.view(-1, embeds.shape[-1]))
-                    tile_offset += n_tiles
-                video_embeds = torch.cat(video_embeds_list, dim=0).to(inputs_embeds.device, inputs_embeds.dtype)
-                _, video_mask = self.model.get_placeholder_mask(
-                    input_ids, inputs_embeds=inputs_embeds, video_features=video_embeds
-                )
-                inputs_embeds = inputs_embeds.masked_scatter(video_mask, video_embeds)
-
-            input_ids = None  # inputs_embeds로 전환
+        if mm_token_type_ids is None and input_ids is not None:
+            if image_grid_thw is not None or video_grid_thw is not None:
+                mm_token_type_ids = torch.zeros_like(input_ids)
+                if img_id := getattr(self.config, 'image_token_id', None):
+                    mm_token_type_ids[input_ids == img_id] = 1
+                if vid_id := getattr(self.config, 'video_token_id', None):
+                    mm_token_type_ids[input_ids == vid_id] = 2
 
         return super().forward(
             input_ids=input_ids,
-            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            # pixel_values / pixel_values_videos 전달 안 함 (이미 주입 완료)
+            position_ids=position_ids,
+            past_key_values=past_key_values,
+            inputs_embeds=inputs_embeds,
+            pixel_values=pixel_values,
+            pixel_values_videos=pixel_values_videos,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            mm_token_type_ids=mm_token_type_ids,
             **kwargs,
         )
 
     @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        kwargs.setdefault("ignore_mismatched_sizes", True)
-        model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-        # model.config.use_cache = True
-        # model.config.text_config.use_cache = True
-        # model.model.language_model.config.use_cache = True
-
-        vjepa2           = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
-        vjepa_dim        = vjepa2.config.hidden_size
-        merge_size       = model.config.vision_config.spatial_merge_size
-        llm_dim          = model.config.text_config.hidden_size
-        patches_per_side = vjepa2.config.image_size // vjepa2.config.patch_size
-
-        device = next(model.model.language_model.parameters()).device
-        dtype  = next(model.model.language_model.parameters()).dtype
-
-        visual = VJEPA2VisualModule(
-            vjepa2, vjepa_dim, merge_size, llm_dim,
-            patches_per_side=patches_per_side,
-        ).to(device=device, dtype=dtype)
-
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("model.visual."):
-                        new_k = k.replace("model.visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                # strict=False: encoder weight는 VISION_MODEL_ID에서 이미 로드됨
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
-                print(f"missing: {missing}")
-
-        # VJEPA2 encoder freeze
-        for param in visual.encoder.parameters():
-            param.requires_grad = False
-
-        model.model.visual = visual
-        return model
-        
-
-class Qwen3_5VJEPALModel(Qwen3_5VJEPAModel):
-    VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
-
-
-class Qwen3_5VJEPAGModel(Qwen3_5VJEPAModel):
-    VISION_MODEL_ID = "facebook/vjepa2-vitg-fpc64-256"
-
-
-class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
-    TORCH_HUB_NAME = None
-
-    @classmethod
-    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
-        kwargs.setdefault("ignore_mismatched_sizes", True)
-        model = Qwen3_5ForConditionalGeneration.from_pretrained(
-            pretrained_model_name_or_path, *args, **kwargs)
-        old_state = model.model.state_dict()
-        model.config.vision_config.spatial_merge_size = 2
-        model.model = Qwen3_5VJEPAInnerModel(model.config)
-        model.model.load_state_dict(old_state, strict=True)
-
-        encoder, _ = torch.hub.load(
-            'facebookresearch/vjepa2',
-            cls.TORCH_HUB_NAME
-        )
-
-        vjepa_dim        = encoder.img_mod_embed.shape[-1]
-        merge_size       = model.config.vision_config.spatial_merge_size
-        llm_dim          = model.config.text_config.hidden_size
-        patches_per_side = 384 // 16  # VJEPA2.1 전 변형 공통 (image_size=384, patch_size=16)
-
-        device = next(model.model.language_model.parameters()).device
-        dtype  = next(model.model.language_model.parameters()).dtype
-
-        visual = VJEPA2VisualModule(
-            encoder, vjepa_dim, merge_size, llm_dim, is_v21=True,
-            patches_per_side=patches_per_side,
-        ).to(device=device, dtype=dtype)
-
-        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
-        if os.path.exists(ckpt_file):
-            visual_state = {}
-            with safe_open(ckpt_file, framework="pt") as f:
-                for k in f.keys():
-                    if k.startswith("model.visual."):
-                        new_k = k.replace("model.visual.", "")
-                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
-            if visual_state:
-                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
-                print(f"visual weights loaded: {len(visual_state)} keys")
-
-        for param in visual.encoder.parameters():
-            param.requires_grad = False
-
-        model.model.visual = visual
-
-        target_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        model = model.to(target_device)
-        return model
-
-
-class Qwen3_5VJEPA21BModel(Qwen3_5VJEPA21Model):
-    TORCH_HUB_NAME = "vjepa2_1_vit_base_384"
-
-class Qwen3_5VJEPA21LModel(Qwen3_5VJEPA21Model):
-    TORCH_HUB_NAME = "vjepa2_1_vit_large_384"
-
-class Qwen3_5VJEPA21GModel(Qwen3_5VJEPA21Model):
-    TORCH_HUB_NAME = "vjepa2_1_vit_giant_384"
-
-
-# ──────────────────────────────────────────────
-# Gemma-4 Models
-# ──────────────────────────────────────────────
-
-class Gemma4VJEPAInnerModel(Gemma4Model):
-
-    def forward(self, *args, image_grid_thw=None, video_grid_thw=None, **kwargs):
-        self._current_image_grid_thw = image_grid_thw
-        self._current_video_grid_thw = video_grid_thw
-        return super().forward(*args, **kwargs)
-
-    def get_image_features(self, pixel_values, image_position_ids=None, **kwargs):
-        image_grid_thw = self._current_image_grid_thw
-
-        merge_size = self.config.vision_config.spatial_merge_size
-        pps        = self.visual.patches_per_side
-        ppt        = pps * pps
-
-        image_embeds = self.visual(pixel_values)
-
-        results     = []
-        item_offset = 0
-
-        for grid_idx in range(image_grid_thw.shape[0]):
-            t, h, w = image_grid_thw[grid_idx].tolist()
-
-            if t == 1:
-                n_tiles = (h * w) // ppt
-                if n_tiles == 1:
-                    embeds = image_embeds[item_offset]
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
-                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
-                    embeds    = assembled.reshape(h * w, -1)
-                item_offset += n_tiles
-            else:
-                n_tiles = (h * w) // ppt
-                if n_tiles == 1:
-                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
-                else:
-                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
-                    n_rows = h // pps
-                    n_cols = w // pps
-                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
-                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()
-                    embeds = tiles.reshape(t * h * w, -1)
-                item_offset += n_tiles
-
-            embeds = embeds.view(t, h // merge_size, merge_size,
-                                 w // merge_size, merge_size, -1)
-            embeds = embeds.permute(0, 1, 3, 2, 4, 5).contiguous()
-            embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size), -1)
-
-            embeds = embeds.to(dtype=self.dtype, device=self.device)
-            embeds = self.visual.merger(embeds)
-
-            results.append(embeds.view(-1, embeds.shape[-1]))
-
-        self._current_image_grid_thw = None
-        final_embeds = torch.cat(results, dim=0)
-        return BaseModelOutputWithPooling(pooler_output=final_embeds)
-
-    def get_video_features(self, pixel_values_videos, video_position_ids=None, **kwargs):
-        video_grid_thw = self._current_video_grid_thw
-        self._current_image_grid_thw = video_grid_thw
-        output = self.get_image_features(pixel_values_videos, video_position_ids, **kwargs)
-        self._current_video_grid_thw = None
-        return output
-
-
-class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
-    VISION_MODEL_ID = None
-    TORCH_HUB_NAME  = None
-
-    def __init__(self, config: Gemma4Config):
-        config.vision_config.spatial_merge_size = 2
-        super().__init__(config)
-        self.model = Gemma4VJEPAInnerModel(config)
-
-    def _validate_model_kwargs(self, model_kwargs):
-        model_kwargs.pop("image_grid_thw", None)
-        model_kwargs.pop("video_grid_thw", None)
-        super()._validate_model_kwargs(model_kwargs)
-
-    @classmethod
     def _load_hf_visual(cls, merge_size, llm_dim, device, dtype):
         vjepa2 = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
+        encoder = vjepa2.encoder
         patches_per_side = vjepa2.config.image_size // vjepa2.config.patch_size
         return VJEPA2VisualModule(
-            vjepa2, vjepa2.config.hidden_size, merge_size, llm_dim,
+            encoder, vjepa2.config.hidden_size, merge_size, llm_dim,
             patches_per_side=patches_per_side, is_v21=False,
         ).to(device=device, dtype=dtype)
 
@@ -479,6 +256,168 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
                 missing, unexpected = visual.load_state_dict(visual_state, strict=False)
                 print(f"visual weights loaded: {len(visual_state)} keys")
                 print(f"missing: {missing}")
+
+        model.model.visual = visual
+        return model
+
+
+class Qwen3_5VJEPALModel(Qwen3_5VJEPAModel):
+    VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
+
+class Qwen3_5VJEPAGModel(Qwen3_5VJEPAModel):
+    VISION_MODEL_ID = "facebook/vjepa2-vitg-fpc64-256"
+
+class Qwen3_5VJEPA21Model(Qwen3_5VJEPAModel):
+    TORCH_HUB_NAME = None
+
+class Qwen3_5VJEPA21BModel(Qwen3_5VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_base_384"
+
+class Qwen3_5VJEPA21LModel(Qwen3_5VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_large_384"
+
+class Qwen3_5VJEPA21GModel(Qwen3_5VJEPA21Model):
+    TORCH_HUB_NAME = "vjepa2_1_vit_giant_384"
+
+
+# ──────────────────────────────────────────────
+# Gemma-4 Models
+# ──────────────────────────────────────────────
+
+class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
+    VISION_MODEL_ID = None
+    TORCH_HUB_NAME  = None
+
+    def __init__(self, config: Gemma4Config):
+        config.vision_config.spatial_merge_size = 2
+        super().__init__(config)
+        # visual placeholder + grid_thw state on the parent's self.model
+        self.model.visual = None
+        self.model._current_image_grid_thw = None
+        self.model._current_video_grid_thw = None
+        # bind outer methods so HF/Swift sees them via self.model
+        self.model.get_image_features = self.get_image_features
+        self.model.get_video_features = self.get_video_features
+
+    def _validate_model_kwargs(self, model_kwargs):
+        model_kwargs.pop("image_grid_thw", None)
+        model_kwargs.pop("video_grid_thw", None)
+        super()._validate_model_kwargs(model_kwargs)
+
+    def forward(self, *args, image_grid_thw=None, video_grid_thw=None, **kwargs):
+        self.model._current_image_grid_thw = image_grid_thw
+        self.model._current_video_grid_thw = video_grid_thw
+        return super().forward(*args, **kwargs)
+
+    def get_image_features(self, pixel_values, image_position_ids=None, **kwargs):
+        image_grid_thw = self.model._current_image_grid_thw
+
+        merge_size = self.config.vision_config.spatial_merge_size
+        pps        = self.model.visual.patches_per_side
+        ppt        = pps * pps
+
+        image_embeds = self.model.visual(pixel_values)
+
+        results     = []
+        item_offset = 0
+
+        for grid_idx in range(image_grid_thw.shape[0]):
+            t, h, w = image_grid_thw[grid_idx].tolist()
+
+            if t == 1:
+                n_tiles = (h * w) // ppt
+                if n_tiles == 1:
+                    embeds = image_embeds[item_offset]
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    grid      = tiles.view(n_rows, n_cols, pps, pps, -1)
+                    assembled = grid.permute(0, 2, 1, 3, 4).contiguous()
+                    embeds    = assembled.reshape(h * w, -1)
+                item_offset += n_tiles
+            else:
+                n_tiles = (h * w) // ppt
+                if n_tiles == 1:
+                    embeds = image_embeds[item_offset].reshape(t * h * w, -1)
+                else:
+                    tiles  = image_embeds[item_offset:item_offset + n_tiles]
+                    n_rows = h // pps
+                    n_cols = w // pps
+                    tiles  = tiles.reshape(n_rows, n_cols, t, pps, pps, -1)
+                    tiles  = tiles.permute(2, 0, 3, 1, 4, 5).contiguous()
+                    embeds = tiles.reshape(t * h * w, -1)
+                item_offset += n_tiles
+
+            embeds = embeds.view(t, h // merge_size, merge_size,
+                                 w // merge_size, merge_size, -1)
+            embeds = embeds.permute(0, 1, 3, 2, 4, 5).contiguous()
+            embeds = embeds.reshape(t, (h // merge_size) * (w // merge_size), -1)
+
+            embeds = embeds.to(dtype=self.dtype, device=self.device)
+            embeds = self.model.visual.merger(embeds)
+
+            results.append(embeds.view(-1, embeds.shape[-1]))
+
+        self.model._current_image_grid_thw = None
+        final_embeds = torch.cat(results, dim=0)
+        return BaseModelOutputWithPooling(pooler_output=final_embeds)
+
+    def get_video_features(self, pixel_values_videos, video_position_ids=None, **kwargs):
+        video_grid_thw = self.model._current_video_grid_thw
+        self.model._current_image_grid_thw = video_grid_thw
+        output = self.get_image_features(pixel_values_videos, video_position_ids, **kwargs)
+        self.model._current_video_grid_thw = None
+        return output
+
+    @classmethod
+    def _load_hf_visual(cls, merge_size, llm_dim, device, dtype):
+        vjepa2 = AutoModel.from_pretrained(cls.VISION_MODEL_ID)
+        encoder = vjepa2.encoder
+        patches_per_side = vjepa2.config.image_size // vjepa2.config.patch_size
+        return VJEPA2VisualModule(
+            encoder, vjepa2.config.hidden_size, merge_size, llm_dim,
+            patches_per_side=patches_per_side, is_v21=False,
+        ).to(device=device, dtype=dtype)
+
+    @classmethod
+    def _load_tf_visual(cls, merge_size, llm_dim, device, dtype):
+        encoder, _ = torch.hub.load('facebookresearch/vjepa2', cls.TORCH_HUB_NAME)
+        patches_per_side = 384 // 16
+        vjepa_dim = encoder.img_mod_embed.shape[-1]
+        return VJEPA2VisualModule(
+            encoder, vjepa_dim, merge_size, llm_dim,
+            patches_per_side=patches_per_side, is_v21=True,
+        ).to(device=device, dtype=dtype)
+
+    @classmethod
+    def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
+        kwargs.setdefault("ignore_mismatched_sizes", True)
+        model = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
+
+        merge_size = model.config.vision_config.spatial_merge_size
+        llm_dim    = model.config.text_config.hidden_size
+        device     = next(model.parameters()).device
+        dtype      = next(model.parameters()).dtype
+
+        if getattr(cls, "VISION_MODEL_ID", None):
+            visual = cls._load_hf_visual(merge_size, llm_dim, device, dtype)
+        elif getattr(cls, "TORCH_HUB_NAME", None):
+            visual = cls._load_tf_visual(merge_size, llm_dim, device, dtype)
+        else:
+            raise ValueError("Missing VISION_MODEL_ID or TORCH_HUB_NAME")
+
+        ckpt_file = os.path.join(pretrained_model_name_or_path, "model.safetensors")
+        if os.path.exists(ckpt_file):
+            visual_state = {}
+            with safe_open(ckpt_file, framework="pt") as f:
+                for k in f.keys():
+                    if k.startswith("model.visual."):
+                        new_k = k.replace("model.visual.", "")
+                        visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
+            if visual_state:
+                missing, unexpected = visual.load_state_dict(visual_state, strict=False)
+                print(f"visual weights loaded: {len(visual_state)} keys")
 
         model.model.visual = visual
         return model
