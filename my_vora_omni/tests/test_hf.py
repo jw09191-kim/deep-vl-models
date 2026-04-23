@@ -97,7 +97,8 @@ def generate(model, processor, messages, max_new_tokens=256):
         return_dict=True,
         return_tensors="pt",
         **template_kwargs,
-    ).to(model.device)
+    )
+    inputs = {k: v.to(model.device) if hasattr(v, 'to') else v for k, v in inputs.items()}
 
     output_ids = model.generate(
         **inputs,
