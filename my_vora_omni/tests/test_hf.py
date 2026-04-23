@@ -86,18 +86,19 @@ def generate(model, processor, messages, max_new_tokens=256):
         if isinstance(msg["content"], str):
             msg["content"] = [{"type": "text", "text": msg["content"]}]
 
+    from my_vora_omni.src.processor.processor import Gemma4VJEPAProcessor
+    is_gemma = isinstance(processor, Gemma4VJEPAProcessor)
+
+    template_kwargs = {} if is_gemma else {"enable_thinking": False}
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
-        enable_thinking=False,
         return_dict=True,
         return_tensors="pt",
+        **template_kwargs,
     ).to(model.device)
-    print(inputs['input_ids'].shape)
-    print(processor.decode(inputs['input_ids'][0]))
-    raise
-    
+
     output_ids = model.generate(
         **inputs,
         max_new_tokens=max_new_tokens,
