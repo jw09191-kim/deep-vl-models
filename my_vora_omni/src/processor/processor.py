@@ -464,17 +464,13 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
         input_ids = torch.tensor([all_ids], dtype=torch.long)
         attention_mask = torch.ones_like(input_ids)
 
-        encoded = {'input_ids': input_ids, 'attention_mask': attention_mask}
-
-        # Attach VJEPA visual tensors.
-        # Renamed to pixel_values / image_grid_thw so Gemma4ForConditionalGeneration
-        # passes them to our hooked get_image_features() via the standard image path.
-        encoded['pixel_values'] = torch.cat([d[1] for d in video_data], dim=0)
-        encoded['image_grid_thw'] = torch.cat([d[2] for d in video_data], dim=0)
-
-        if return_dict:
-            return encoded
-        return encoded
+        data = {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'pixel_values': torch.cat([d[1] for d in video_data], dim=0),
+            'image_grid_thw': torch.cat([d[2] for d in video_data], dim=0),
+        }
+        return BatchFeature(data=data, tensor_type=return_tensors)
 
 class Qwen3VLVJepa2LProcessor(Qwen3VLVJEPAProcessor):
     VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"
