@@ -432,36 +432,45 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
                 msg = dict(msg, content=new_content)
             modified.append(msg)
 
-        # Get the formatted text (no tokenization yet so we can edit the string).
+        # Get the formatted text with markers (no tokenization yet).
         text = self.tokenizer.apply_chat_template(
             modified,
             tokenize=False,
             add_generation_prompt=add_generation_prompt,
         )
 
-        # Replace each marker with the correct number of image_soft_tokens.
-        img_soft = '<image_soft_token>'
-        for (n_tokens, _, _) in video_data:
-            text = text.replace(_MARKER, img_soft * n_tokens, 1)
-
         if not tokenize:
+            # For text-only output replace markers with the token string for readability.
+            img_soft = self.tokenizer.convert_ids_to_tokens(
+                self.tokenizer.convert_tokens_to_ids('<image_soft_token>')
+            )
+            for (n_tokens, _, _) in video_data:
+                text = text.replace(_MARKER, img_soft * n_tokens, 1)
             return text
 
-        # Tokenize. The Jinja output already contains <bos> / <start_of_turn> /
-        # <end_of_turn> as literal special-token strings, so add_special_tokens=False
-        # avoids a duplicate BOS while still mapping specials to their IDs.
-        encoded = self.tokenizer(
-            text,
-            return_tensors=return_tensors,
-            add_special_tokens=False,
-        )
+        # Insert image_soft_token IDs directly.  String-based insertion fails because
+        # the tokenizer does not recognise '<image_soft_token>' as a special token
+        # when it appears as plain text inside an already-formatted string.
+        img_token_id = self.tokenizer.convert_tokens_to_ids('<image_soft_token>')
+
+        parts = text.split(_MARKER)
+        all_ids: list[int] = []
+        for i, part in enumerate(parts):
+            if part:
+                all_ids.extend(self.tokenizer.encode(part, add_special_tokens=False))
+            if i < len(video_data):
+                all_ids.extend([img_token_id] * video_data[i][0])
+
+        input_ids = torch.tensor([all_ids], dtype=torch.long)
+        attention_mask = torch.ones_like(input_ids)
+
+        encoded = {'input_ids': input_ids, 'attention_mask': attention_mask}
 
         # Attach VJEPA visual tensors.
         # Renamed to pixel_values / image_grid_thw so Gemma4ForConditionalGeneration
         # passes them to our hooked get_image_features() via the standard image path.
         encoded['pixel_values'] = torch.cat([d[1] for d in video_data], dim=0)
         encoded['image_grid_thw'] = torch.cat([d[2] for d in video_data], dim=0)
-        encoded['num_soft_tokens_per_image'] = [d[0] for d in video_data]
 
         if return_dict:
             return encoded
