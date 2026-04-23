@@ -248,6 +248,7 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
         self._queued_video_grid_thw = model_kwargs.pop("video_grid_thw", None)
         model_kwargs.pop("mm_token_type_ids", None)
         model_kwargs.pop("num_soft_tokens_per_video", None)
+        model_kwargs.pop("num_soft_tokens_per_image", None)
         super()._validate_model_kwargs(model_kwargs)
 
     def forward(self, *args, image_grid_thw=None, video_grid_thw=None, **kwargs):
