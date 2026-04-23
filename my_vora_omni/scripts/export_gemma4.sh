@@ -14,8 +14,10 @@ if [ ! -d "$CHECKPOINT" ]; then
 fi
 
 MODEL_TYPE="vora-gemma4-${ENCODER}"
-MODEL_SIZE=$(echo "$CHECKPOINT" | grep -oP '(E2B|E4B)' | head -1)
-MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+if [ -z "$MODEL_SIZE" ]; then
+    MODEL_SIZE=$(echo "$STAGE1_MODEL" | grep -oP '(E2B(?:-it)?|E4B(?:-it)?)' | head -1)
+    MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+fi
 
 BASE_MODEL="google/gemma-4-${MODEL_SIZE}"
 
@@ -47,7 +49,7 @@ if [ "$STAGE" = "lora" ]; then
         --model "$BASE_MODEL" \
         --adapters "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --merge_lora true \
         --output_dir "$MERGED_PATH"
 

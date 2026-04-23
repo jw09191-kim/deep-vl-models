@@ -11,7 +11,6 @@ _IMAGE_EXTS = frozenset(('jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tiff', 'ti
 
 
 def _is_frame_list(video) -> bool:
-    """video가 이미지 파일 경로 목록(프레임 기반 비디오)이면 True."""
     return (
         isinstance(video, (list, tuple))
         and len(video) > 0
@@ -21,12 +20,6 @@ def _is_frame_list(video) -> bool:
 
 
 def _load_frames_as_tensor(frame_paths: List[str]) -> torch.Tensor:
-    """이미지 파일 목록 → (T, C, H, W) uint8 [0, 255] 텐서.
-
-    torchcodec 디코딩 결과와 동일한 포맷으로 반환한다.
-    비디오 프로세서는 do_rescale=True (×1/255)를 적용하므로
-    float [0, 1]로 반환하면 값이 0에 수렴하는 버그가 발생한다.
-    """
     frames = [
         torch.from_numpy(np.array(Image.open(p).convert('RGB'))).permute(2, 0, 1)
         for p in frame_paths
@@ -46,17 +39,9 @@ class Qwen3_5VJEPATemplate(Qwen3_5Template):
 # ──────────────────────────────────────────────
 
 class Gemma4VJEPATemplate(Gemma4Template):
-
     def _encode(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
-        # Gemma4Template._encode()의 whitelist에 image_grid_thw / video_grid_thw가 없어
-        # _post_encode (또는 model.forward)에 전달되지 않는 문제를 해결한다.
-        # 부모의 super(Gemma4Template, self)._encode()로 텍스트 인코딩을 얻고,
-        # processor를 1회 호출해 모든 미디어 키(grid_thw 포함)를 encoded에 복사한다.
         encoded = super(Gemma4Template, self)._encode(inputs)
 
-        # Gemma4VideoProcessor는 HF torchcodec 파이프라인을 사용하므로
-        # Qwen3VL 호환 포맷(이미지 파일 목록 = 프레임 기반 비디오)을 지원하지 않는다.
-        # inputs.videos 원소가 프레임 경로 리스트이면 (T, C, H, W) 텐서로 변환한다.
         videos_for_processor = None
         if inputs.videos:
             videos_for_processor = [
@@ -97,12 +82,12 @@ class Gemma4VJEPATemplate(Gemma4Template):
                 input_ids, labels, loss_scale, idx_list, lambda i: splited_tokens[i]
             )
 
-        # 기존 Gemma4Template 키 + VJEPA에 필요한 grid_thw 키 포함
         COPY_KEYS = [
             'pixel_values', 'image_position_ids',
             'pixel_values_videos', 'video_position_ids',
             'input_features', 'input_features_mask',
             'image_grid_thw', 'video_grid_thw',
+            'num_soft_tokens_per_image', 'num_soft_tokens_per_video',
         ]
         for key in COPY_KEYS:
             if key in media_inputs:
@@ -114,14 +99,12 @@ class Gemma4VJEPATemplate(Gemma4Template):
         return encoded
 
     def _post_encode(self, model, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        # visual feature 주입은 Gemma4VJEPAModel.forward()가 담당한다.
         return inputs
 
-    def _data_collator(self, batch: List[Dict[str, Any]], *, padding_to: Optional[int] = None) -> Dict[str, Any]:
-        result = super()._data_collator(batch, padding_to=padding_to)
-        # Gemma4의 부모 collator는 image_grid_thw / video_grid_thw를 수집하지 않으므로 직접 처리
-        for key in ('image_grid_thw', 'video_grid_thw'):
-            tensors = [item[key] for item in batch if item.get(key) is not None]
-            if tensors:
-                result[key] = torch.cat(tensors, dim=0)
-        return result
+    def _data_collator_mm_data(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+        res = super()._data_collator_mm_data(batch)
+        for key in ['image_grid_thw', 'video_grid_thw']:
+            value = [b[key] for b in batch if b.get(key) is not None]
+            if value:
+                res[key] = torch.concat(value)
+        return res

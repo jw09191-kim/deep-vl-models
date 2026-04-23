@@ -14,8 +14,11 @@ if [ ! -d "$CHECKPOINT" ]; then
 fi
 
 MODEL_TYPE="vora-qwen35-${ENCODER}"
-MODEL_SIZE=$(echo "$CHECKPOINT" | grep -oP '(0\.8B|2B)' | head -1)
-MODEL_SIZE=${MODEL_SIZE:-"0.8B"}
+
+if [ -z "$MODEL_SIZE" ]; then
+    MODEL_SIZE=$(echo "$STAGE1_MODEL" | grep -oP '(0\.8B|2B)' | head -1)
+    MODEL_SIZE=${MODEL_SIZE:-"0.8B"}
+fi
 
 BASE_MODEL="Qwen/Qwen3.5-${MODEL_SIZE}"
 
@@ -47,7 +50,7 @@ if [ "$STAGE" = "lora" ]; then
         --model "$BASE_MODEL" \
         --adapters "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --merge_lora true \
         --output_dir "$MERGED_PATH"
 
@@ -112,22 +115,10 @@ if stage == "lora":
     model = model.merge_and_unload()
     print("LoRA merged.")
 
-# ── Save 전에 key 확인 및 정리 ────────────────────────────────
-state = model.state_dict()
-fixed_state = {}
-for k, v in state.items():
-    # model.language_model.visual.* → model.visual.*
-    if 'language_model.visual.' in k:
-        new_k = k.replace('language_model.visual.', 'visual.')
-        fixed_state[new_k] = v
-        print(f"  Key fixed: {k} → {new_k}")
-    else:
-        fixed_state[k] = v
-
-# 수정된 state로 저장
+# ── Save ─────────────────────────────────────────────────────
 model.save_pretrained(merged_path)
 
-# 그 다음 저장된 파일의 key 수정
+# language_model.visual.* → visual.* key 수정
 from safetensors.torch import load_file, save_file
 st = load_file(os.path.join(merged_path, "model.safetensors"))
 fixed = {}
@@ -135,8 +126,9 @@ for k, v in st.items():
     if 'language_model.visual.' in k:
         new_k = k.replace('language_model.visual.', 'visual.')
         fixed[new_k] = v
+        print(f"  Key fixed: {k} → {new_k}")
     else:
-        fixed[new_k if 'language_model.visual.' in k else k] = v
+        fixed[k] = v
 save_file(fixed, os.path.join(merged_path, "model.safetensors"))
 
 # config + processor 저장

@@ -12,8 +12,10 @@ CHECKPOINT="${1:?Usage: $0 <checkpoint> [encoder] [dataset]}"
 ENCODER="${2:-vitl}"
 VAL_DATASET="${3:-my_vora_omni/scripts/jsonl/infer.jsonl}"
 
-MODEL_SIZE=$(echo "$CHECKPOINT" | grep -oP '(E2B|E4B)' | head -1)
-MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+if [ -z "$MODEL_SIZE" ]; then
+    MODEL_SIZE=$(echo "$CHECKPOINT" | grep -oP '(E2B(?:-it)?|E4B(?:-it)?)' | head -1)
+    MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+fi
 
 BASE_MODEL="google/gemma-4-${MODEL_SIZE}"
 MODEL_TYPE="vora-gemma4-${ENCODER}"
@@ -34,7 +36,7 @@ if [ -f "$CHECKPOINT/adapter_config.json" ]; then
         --model "$BASE_MODEL" \
         --adapters "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --torch_dtype bfloat16 \
         --max_new_tokens 256 \
         --val_dataset "$VAL_DATASET" \
@@ -45,7 +47,7 @@ else
     swift infer \
         --model "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --torch_dtype bfloat16 \
         --max_new_tokens 256 \
         --val_dataset "$VAL_DATASET" \

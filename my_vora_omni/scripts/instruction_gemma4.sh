@@ -7,6 +7,7 @@ export MKL_THREADING_LAYER=GNU
 export USE_HF=1
 export HF_HUB_OFFLINE=0
 export FPS_MAX_FRAMES=16
+export IMAGE_MAX_TILES=4
 
 export PYTHONPATH="./deep-vl-models:$PYTHONPATH"
 
@@ -18,16 +19,12 @@ AUTO_GPU_COUNT=$(echo "$CUDA_VISIBLE_DEVICES" | awk -F, '{print NF}')
 STAGE1_MODEL="${1:?Usage: $0 <stage1_checkpoint_path> [encoder]}"
 ENCODER="${2:-vitl}"
 
-if [ ! -d "$STAGE1_MODEL" ]; then
-    echo "Stage 1 checkpoint not found: $STAGE1_MODEL"
-    exit 1
-fi
-
 MODEL_TYPE="vora-gemma4-${ENCODER}"
 
-# Extract model size for naming (E2B / E4B)
-MODEL_SIZE=$(echo "$STAGE1_MODEL" | grep -oP '(E2B|E4B)' | head -1)
-MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+if [ -z "$MODEL_SIZE" ]; then
+    MODEL_SIZE=$(echo "$STAGE1_MODEL" | grep -oP '(E2B(?:-it)?|E4B(?:-it)?)' | head -1)
+    MODEL_SIZE=${MODEL_SIZE:-"E4B"}
+fi
 
 OUTPUT_DIR=${OUTPUT_DIR:-"output"}
 OUTPUT_DIR=$OUTPUT_DIR/"gemma-4-${MODEL_SIZE}-${ENCODER}-instruction"
@@ -35,7 +32,7 @@ OUTPUT_DIR=$OUTPUT_DIR/"gemma-4-${MODEL_SIZE}-${ENCODER}-instruction"
 if [ -d "/tensorboard" ]; then
     export HF_HOME=/group-volume/.cache/huggingface
     export TORCH_HOME=/group-volume/.cache/torch
-    mkdir -p "$HF_HOME" "$TORCH_HOME"
+    export HF_HUB_OFFLINE=1
 fi
 
 echo "=========================================="
@@ -52,8 +49,7 @@ NPROC_PER_NODE=$AUTO_GPU_COUNT \
 swift sft \
     --model "$STAGE1_MODEL" \
     --model_type "$MODEL_TYPE" \
-    --external_plugins 'my_vora_omni' \
-    --system "You are a helpful assistant that can understand and analyze images and videos." \
+    --external_plugins 'my_vora_omni/src/register.py' \
     --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
               './datasets/LLaVA-Video-178K/sources/youtube_video_2024.jsonl#50000' \
               './datasets/LLaVA-Video-178K/sources/Charades.jsonl' \
@@ -65,29 +61,28 @@ swift sft \
               './datasets/LLaVA-Video-178K/sources/videos.jsonl' \
               './datasets/LLaVA-Video-178K/sources/others.jsonl#20000' \
     --tuner_type lora \
-    --lora_rank 64 \
-    --lora_alpha 128 \
+    --lora_rank 32 \
+    --lora_alpha 64 \
     --target_modules all-linear \
     --torch_dtype bfloat16 \
-    --attn_impl "flash_attn" \
-    --deepspeed zero2 \
+    --attn_impl "sdpa" \
     --padding_free false \
     --num_train_epochs 3 \
-    --per_device_train_batch_size 4 \
-    --per_device_eval_batch_size 4 \
+    --per_device_train_batch_size 2 \
+    --per_device_eval_batch_size 2 \
     --learning_rate 2e-5 \
+    --lr_scheduler_type cosine \
     --freeze_vit true \
     --freeze_llm false \
     --freeze_aligner false \
-    --modules_to_save "visual.merger" \
+    --modules_to_save "model.visual.merger" \
     --gradient_accumulation_steps 4 \
     --eval_steps 1000 \
     --save_steps 1000 \
-    --save_total_limit 3 \
-    --split_dataset_ratio 0.01 \
+    --save_total_limit 1 \
     --save_strategy "steps" \
     --logging_steps 10 \
-    --max_length 4096 \
+    --max_length 5120\
     --output_dir "$OUTPUT_DIR" \
     --warmup_ratio 0.03 \
     --dataloader_num_workers 8 \

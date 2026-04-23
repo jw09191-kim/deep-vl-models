@@ -34,7 +34,7 @@ if [ -f "$CHECKPOINT/adapter_config.json" ]; then
         --model "$BASE_MODEL" \
         --adapters "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --torch_dtype bfloat16 \
         --max_new_tokens 256 \
         --val_dataset "$VAL_DATASET" \
@@ -46,7 +46,7 @@ else
     swift infer \
         --model "$CHECKPOINT" \
         --model_type "$MODEL_TYPE" \
-        --external_plugins 'my_vora_omni' \
+        --external_plugins 'my_vora_omni/src/register.py' \
         --torch_dtype bfloat16 \
         --max_new_tokens 256 \
         --val_dataset "$VAL_DATASET" \

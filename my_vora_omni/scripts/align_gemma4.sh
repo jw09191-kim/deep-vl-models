@@ -7,6 +7,7 @@ export MKL_THREADING_LAYER=GNU
 export USE_HF=1
 export HF_HUB_OFFLINE=0
 export FPS_MAX_FRAMES=16
+export IMAGE_MAX_TILES=4
 
 export PYTHONPATH="./deep-vl-models:$PYTHONPATH"
 
@@ -36,7 +37,7 @@ OUTPUT_DIR="$OUTPUT_DIR/${MODEL_ID_CLEAN}-${ENCODER}-align"
 if [ -d "/tensorboard" ]; then
     export HF_HOME=/group-volume/.cache/huggingface
     export TORCH_HOME=/group-volume/.cache/torch
-    mkdir -p "$HF_HOME" "$TORCH_HOME"
+    export HF_HUB_OFFLINE=1
 fi
 
 echo "=========================================="
@@ -53,29 +54,29 @@ NPROC_PER_NODE=$AUTO_GPU_COUNT \
 swift sft \
     --model "$MODEL_ID" \
     --model_type "$MODEL_TYPE" \
-    --external_plugins 'my_vora_omni' \
-    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
-              './datasets/LLaVA-Video-178K/llava_video_clean.jsonl#150000' \
+    --external_plugins 'my_vora_omni/src/register.py' \
+    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#50000' \
+              './datasets/LLaVA-Video-178K/sources/ego4d.jsonl#10000' \
     --tuner_type full \
     --torch_dtype bfloat16 \
-    --attn_impl "flash_attn" \
+    --attn_impl "sdpa" \
     --padding_free false \
-    --num_train_epochs 2 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
+    --num_train_epochs 1 \
+    --per_device_train_batch_size 4 \
+    --per_device_eval_batch_size 4 \
     --learning_rate 5e-5 \
     --lr_scheduler_type cosine \
     --freeze_vit true \
     --freeze_llm true \
     --freeze_aligner false \
-    --modules_to_save "visual.merger" \
-    --gradient_accumulation_steps 2 \
+    --modules_to_save "model.visual.merger" \
+    --gradient_accumulation_steps 4 \
     --eval_steps 500 \
     --save_steps 500 \
-    --save_total_limit 3 \
+    --save_total_limit 1 \
     --save_strategy "steps" \
     --logging_steps 10 \
-    --max_length 4096 \
+    --max_length 5120 \
     --output_dir "$OUTPUT_DIR" \
     --warmup_ratio 0.03 \
     --dataloader_num_workers 8 \
