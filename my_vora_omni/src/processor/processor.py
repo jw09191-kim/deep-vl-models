@@ -287,6 +287,8 @@ class Qwen3VLVJEPAProcessor(Qwen3VLProcessor):
 
         return processor
 
+
+
 class Gemma4VJEPAImageProcessor(VJEPAImageMixin, Gemma4ImageProcessor):
     def __init__(
         self, vision_model_id: str = "facebook/vjepa2-vitl-fpc64-256", **kwargs
@@ -364,113 +366,17 @@ class Gemma4VJEPAProcessor(Gemma4Processor):
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         processor = super().from_pretrained(pretrained_model_name_or_path, *args, **kwargs)
-
+        
         processor.image_processor = Gemma4VJEPAImageProcessor(vision_model_id=cls.VISION_MODEL_ID, **kwargs)
         processor.video_processor = Gemma4VJEPAVideoProcessor(vision_model_id=cls.VISION_MODEL_ID, **kwargs)
-
+        
         if getattr(processor, 'chat_template', None) is None:
             jinja_path = os.path.join(pretrained_model_name_or_path, 'chat_template.jinja')
             if os.path.exists(jinja_path):
                 with open(jinja_path) as f:
                     processor.chat_template = f.read()
-
+                    
         return processor
-
-    def apply_chat_template(self, conversations, tokenize=True, add_generation_prompt=False, **kwargs):
-        """VJEPA-aware apply_chat_template.
-
-        Gemma4's native apply_chat_template treats video as frame-by-frame images
-        (inserting per-frame image_soft_tokens with timestamps), which is incompatible
-        with VJEPA video processing that needs the full temporal sequence together.
-        This override processes video via the VJEPA video pipeline and injects
-        image_soft_tokens manually in the formatted text.
-        """
-        import torch
-
-        return_tensors = kwargs.pop('return_tensors', 'pt')
-        return_dict = kwargs.pop('return_dict', False)
-        kwargs.pop('enable_thinking', None)  # Qwen-specific; Gemma4 doesn't accept it
-
-        # Collect video items and process them via VJEPA.
-        video_data = []  # list of (num_tokens, pixel_values_videos, video_grid_thw)
-        for msg in conversations:
-            content = msg.get('content', [])
-            if not isinstance(content, list):
-                continue
-            for item in content:
-                if isinstance(item, dict) and item.get('type') == 'video':
-                    features = self.video_processor.preprocess([item['video']])
-                    pvv = features.get('pixel_values_videos')
-                    vgt = features.get('video_grid_thw')
-                    nst = features.get('num_soft_tokens_per_video', [None])
-                    video_data.append((int(nst[0]), pvv, vgt))
-
-        if not video_data:
-            # No video — fall back to parent for image-only or text-only messages.
-            return super().apply_chat_template(
-                conversations,
-                tokenize=tokenize,
-                add_generation_prompt=add_generation_prompt,
-                return_tensors=return_tensors if return_dict else None,
-                return_dict=return_dict,
-                **kwargs,
-            )
-
-        # Replace video items with a unique text marker so the Jinja template
-        # treats them as plain text (no timestamp insertion, no per-frame tokens).
-        _MARKER = '⁠VIDEO_VJEPA_PLACEHOLDER⁠'
-        modified = []
-        for msg in conversations:
-            content = msg.get('content', [])
-            if isinstance(content, list):
-                new_content = []
-                for item in content:
-                    if isinstance(item, dict) and item.get('type') == 'video':
-                        new_content.append({'type': 'text', 'text': _MARKER})
-                    else:
-                        new_content.append(item)
-                msg = dict(msg, content=new_content)
-            modified.append(msg)
-
-        # Get the formatted text with markers (no tokenization yet).
-        text = self.tokenizer.apply_chat_template(
-            modified,
-            tokenize=False,
-            add_generation_prompt=add_generation_prompt,
-        )
-
-        if not tokenize:
-            # For text-only output replace markers with the token string for readability.
-            img_soft = self.tokenizer.convert_ids_to_tokens(
-                self.tokenizer.convert_tokens_to_ids('<image_soft_token>')
-            )
-            for (n_tokens, _, _) in video_data:
-                text = text.replace(_MARKER, img_soft * n_tokens, 1)
-            return text
-
-        # Insert image_soft_token IDs directly.  String-based insertion fails because
-        # the tokenizer does not recognise '<image_soft_token>' as a special token
-        # when it appears as plain text inside an already-formatted string.
-        img_token_id = self.tokenizer.convert_tokens_to_ids('<image_soft_token>')
-
-        parts = text.split(_MARKER)
-        all_ids: list[int] = []
-        for i, part in enumerate(parts):
-            if part:
-                all_ids.extend(self.tokenizer.encode(part, add_special_tokens=False))
-            if i < len(video_data):
-                all_ids.extend([img_token_id] * video_data[i][0])
-
-        input_ids = torch.tensor([all_ids], dtype=torch.long)
-        attention_mask = torch.ones_like(input_ids)
-
-        data = {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask,
-            'pixel_values': torch.cat([d[1] for d in video_data], dim=0),
-            'image_grid_thw': torch.cat([d[2] for d in video_data], dim=0),
-        }
-        return BatchFeature(data=data, tensor_type=return_tensors)
 
 class Qwen3VLVJepa2LProcessor(Qwen3VLVJEPAProcessor):
     VISION_MODEL_ID = "facebook/vjepa2-vitl-fpc64-256"

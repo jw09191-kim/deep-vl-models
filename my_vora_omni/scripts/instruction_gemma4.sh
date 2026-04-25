@@ -61,8 +61,8 @@ swift sft \
               './datasets/LLaVA-Video-178K/sources/videos.jsonl' \
               './datasets/LLaVA-Video-178K/sources/others.jsonl#20000' \
     --tuner_type lora \
-    --lora_rank 32 \
-    --lora_alpha 64 \
+    --lora_rank 64 \
+    --lora_alpha 128 \
     --target_modules all-linear \
     --torch_dtype bfloat16 \
     --attn_impl "sdpa" \
@@ -71,7 +71,6 @@ swift sft \
     --per_device_train_batch_size 2 \
     --per_device_eval_batch_size 2 \
     --learning_rate 2e-5 \
-    --lr_scheduler_type cosine \
     --freeze_vit true \
     --freeze_llm false \
     --freeze_aligner false \
@@ -79,7 +78,7 @@ swift sft \
     --gradient_accumulation_steps 4 \
     --eval_steps 1000 \
     --save_steps 1000 \
-    --save_total_limit 1 \
+    --save_total_limit 3 \
     --save_strategy "steps" \
     --logging_steps 10 \
     --max_length 5120\

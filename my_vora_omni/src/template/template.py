@@ -98,6 +98,30 @@ class Gemma4VJEPATemplate(Gemma4Template):
         encoded['loss_scale'] = loss_scale
         return encoded
 
+        def _get_new_tokens(i):
+            return splited_tokens[i]
+
+        if idx_list:
+            input_ids, labels, loss_scale = self._extend_tokens(input_ids, labels, loss_scale, idx_list, _get_new_tokens)
+            
+        COPY_KEYS = [
+            'pixel_values', 'image_position_ids', 
+            'pixel_values_videos', 'video_position_ids', 
+            'input_features', 'input_features_mask',
+            'image_grid_thw', 'video_grid_thw',
+            'num_soft_tokens_per_image', 'num_soft_tokens_per_video'
+        ]
+        
+        for key in COPY_KEYS:
+            if key in media_inputs:
+                encoded[key] = media_inputs[key]
+                
+        encoded['input_ids'] = input_ids
+        encoded['labels'] = labels
+        encoded['loss_scale'] = loss_scale
+        
+        return encoded
+
     def _post_encode(self, model, inputs: Dict[str, Any]) -> Dict[str, Any]:
         return inputs
 

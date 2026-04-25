@@ -215,6 +215,9 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
                         if k.startswith("model.visual."):
                             new_k = k.replace("model.visual.", "")
                             visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
+                        elif k.startswith("model.language_model.visual."):
+                            new_k = k.replace("model.language_model.visual.", "")
+                            visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
             
             if visual_state:
                 missing, unexpected = visual.load_state_dict(visual_state, strict=False)
@@ -222,6 +225,7 @@ class Qwen3_5VJEPAModel(Qwen3_5ForConditionalGeneration):
 
         model.model.visual = visual
         return model
+
 
 
 class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
@@ -241,26 +245,15 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
         self.model.get_video_features = self.get_video_features
 
     def _validate_model_kwargs(self, model_kwargs):
-        # Pop custom kwargs unknown to base Gemma4, but save grid_thw so forward() can use them.
-        # generate() calls _validate_model_kwargs once before the loop, so without saving here
-        # image_grid_thw would be permanently gone by the time forward() is called.
-        self._queued_image_grid_thw = model_kwargs.pop("image_grid_thw", None)
-        self._queued_video_grid_thw = model_kwargs.pop("video_grid_thw", None)
+        model_kwargs.pop("image_grid_thw", None)
+        model_kwargs.pop("video_grid_thw", None)
         model_kwargs.pop("mm_token_type_ids", None)
-        model_kwargs.pop("num_soft_tokens_per_video", None)
-        model_kwargs.pop("num_soft_tokens_per_image", None)
         super()._validate_model_kwargs(model_kwargs)
 
     def forward(self, *args, image_grid_thw=None, video_grid_thw=None, **kwargs):
-        if image_grid_thw is None:
-            image_grid_thw = getattr(self, '_queued_image_grid_thw', None)
-            self._queued_image_grid_thw = None
-        if video_grid_thw is None:
-            video_grid_thw = getattr(self, '_queued_video_grid_thw', None)
-            self._queued_video_grid_thw = None
         self.model._current_image_grid_thw = image_grid_thw
         self.model._current_video_grid_thw = video_grid_thw
-
+        
         outputs = super().forward(*args, **kwargs)
         if hasattr(outputs, 'logits') and outputs.logits is not None and outputs.logits.dim() == 4:
             if isinstance(outputs, dict):
@@ -381,6 +374,9 @@ class Gemma4VJEPAModel(Gemma4ForConditionalGeneration):
                     for k in f.keys():
                         if k.startswith("model.visual."):
                             new_k = k.replace("model.visual.", "")
+                            visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
+                        elif k.startswith("model.language_model.visual."):
+                            new_k = k.replace("model.language_model.visual.", "")
                             visual_state[new_k] = f.get_tensor(k).to(device=device, dtype=dtype)
             
             if visual_state:
