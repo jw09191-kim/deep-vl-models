@@ -1,5 +1,5 @@
-from .processor import (
-    VoRAVisionConfig,
+from .processor_base import VoRAVisionConfig
+from .processor_qwen import (
     Qwen3VJEPAImageProcessor,
     Qwen3VJEPAVideoProcessor,
     Qwen3VLVJEPAProcessor,
@@ -8,6 +8,8 @@ from .processor import (
     Qwen3VLVJepa21BProcessor,
     Qwen3VLVJepa21LProcessor,
     Qwen3VLVJepa21GProcessor,
+)
+from .processor_gemma import (
     Gemma4VJEPAImageProcessor,
     Gemma4VJEPAVideoProcessor,
     Gemma4VJEPAProcessor,
@@ -15,7 +17,17 @@ from .processor import (
     Gemma4VJepa2GProcessor,
     Gemma4VJEPA21BProcessor,
     Gemma4VJEPA21LProcessor,
-    Gemma4VJEPA21GProcessor,    
+    Gemma4VJEPA21GProcessor,
+)
+from .processor_liquid import (
+    Lfm2VJEPAImageProcessor,
+    Lfm2VJEPAVideoProcessor,
+    Lfm2VLVJEPAProcessor,
+    Lfm2VLVJepa2LProcessor,
+    Lfm2VLVJepa2GProcessor,
+    Lfm2VLVJEPA21BProcessor,
+    Lfm2VLVJEPA21LProcessor,
+    Lfm2VLVJEPA21GProcessor,
 )
 
 __all__ = [
@@ -36,4 +48,12 @@ __all__ = [
     "Gemma4VJEPA21BProcessor",
     "Gemma4VJEPA21LProcessor",
     "Gemma4VJEPA21GProcessor",
+    "Lfm2VJEPAImageProcessor",
+    "Lfm2VJEPAVideoProcessor",
+    "Lfm2VLVJEPAProcessor",
+    "Lfm2VLVJepa2LProcessor",
+    "Lfm2VLVJepa2GProcessor",
+    "Lfm2VLVJEPA21BProcessor",
+    "Lfm2VLVJEPA21LProcessor",
+    "Lfm2VLVJEPA21GProcessor",
 ]
