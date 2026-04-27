@@ -46,6 +46,23 @@ def _decode_video_to_tensor(path: str, max_frames: int = 32) -> torch.Tensor:
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):
 
+    def replace_tag(
+        self,
+        media_type: Literal['image', 'video', 'audio'],
+        index: int,
+        inputs: StdTemplateInputs,
+    ) -> List:
+        if media_type == 'video':
+            v = inputs.videos[index]
+            max_frames = int(os.environ.get("FPS_MAX_FRAMES", "32"))
+            if _is_frame_list(v):
+                inputs.videos[index] = _load_frames_as_tensor(v)
+            elif _is_video_path(v):
+                inputs.videos[index] = _decode_video_to_tensor(v, max_frames)
+            inputs.mm_processor_kwargs['do_sample_frames'] = False
+            return ['<|video_pad|>']
+        return super().replace_tag(media_type, index, inputs)
+
     def _post_encode(self, _model, inputs: Dict[str, Any]) -> Dict[str, Any]:
         # visual feature 주입은 Qwen3_5VJEPAModel.forward()가 담당한다.
         return inputs
