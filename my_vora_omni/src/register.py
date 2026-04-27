@@ -407,7 +407,6 @@ register_template(
         chat_sep=["<|im_end|>\n"],
         suffix=["<|im_end|>"],
         default_system="You are a helpful assistant.",
-        is_multimodal=True,
     )
 )
 
