@@ -61,8 +61,11 @@ class Gemma4VJEPATemplate(Gemma4Template):
 
         videos_for_processor = None
         if inputs.videos:
+            max_frames = int(os.environ.get("FPS_MAX_FRAMES", "16"))
             videos_for_processor = [
-                _load_frames_as_tensor(v) if _is_frame_list(v) else v
+                _load_frames_as_tensor(v) if _is_frame_list(v)
+                else _decode_video_to_tensor(v, max_frames) if _is_video_path(v)
+                else v
                 for v in inputs.videos
             ]
 
