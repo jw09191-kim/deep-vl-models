@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 from PIL import Image
@@ -9,6 +10,7 @@ from swift.template.template_inputs import StdTemplateInputs
 from swift.template.utils import findall
 
 _IMAGE_EXTS = frozenset(('jpg', 'jpeg', 'png', 'bmp', 'webp', 'gif', 'tiff', 'tif'))
+_VIDEO_EXTS = frozenset(('mp4', 'avi', 'mov', 'mkv', 'webm', 'flv', 'wmv'))
 
 
 def _is_frame_list(video) -> bool:
@@ -20,12 +22,26 @@ def _is_frame_list(video) -> bool:
     )
 
 
+def _is_video_path(video) -> bool:
+    return isinstance(video, str) and video.rsplit('.', 1)[-1].lower() in _VIDEO_EXTS
+
+
 def _load_frames_as_tensor(frame_paths: List[str]) -> torch.Tensor:
     frames = [
         torch.from_numpy(np.array(Image.open(p).convert('RGB'))).permute(2, 0, 1)
         for p in frame_paths
     ]
     return torch.stack(frames)  # (T, C, H, W) uint8
+
+
+def _decode_video_to_tensor(path: str, max_frames: int = 32) -> torch.Tensor:
+    import decord
+    decord.bridge.set_bridge('torch')
+    vr = decord.VideoReader(path, ctx=decord.cpu(0))
+    total = len(vr)
+    indices = torch.linspace(0, total - 1, min(max_frames, total)).long().tolist()
+    frames = vr.get_batch(indices)  # (T, H, W, C) uint8
+    return frames.permute(0, 3, 1, 2).contiguous()  # (T, C, H, W)
 
 
 class Qwen3_5VJEPATemplate(Qwen3_5Template):
@@ -136,10 +152,18 @@ class Lfm2VJEPATemplate(Template):
         index: int,
         inputs: StdTemplateInputs,
     ) -> List:
-        if media_type == 'video' and _is_frame_list(inputs.videos[index]):
-            inputs.videos[index] = _load_frames_as_tensor(inputs.videos[index])
+        if media_type == 'video':
+            v = inputs.videos[index]
+            if _is_frame_list(v):
+                inputs.videos[index] = _load_frames_as_tensor(v)
+            elif _is_video_path(v):
+                max_frames = int(os.environ.get("FPS_MAX_FRAMES", "32"))
+                inputs.videos[index] = _decode_video_to_tensor(v, max_frames)
         if media_type in ('image', 'video'):
-            return ['<image>']
+            # Return integer token ID directly so Swift inserts it into input_ids
+            # without going through the tokenizer (avoids '<image>' string
+            # tokenization ambiguity for models like LFM2).
+            return [[self.config.image_token_id]]
         return []
 
     def _encode(self, inputs: StdTemplateInputs) -> Dict[str, Any]:
@@ -165,8 +189,11 @@ class Lfm2VJEPATemplate(Template):
             all_soft_tokens.extend(soft.tolist() if isinstance(soft, torch.Tensor) else soft)
 
         if inputs.videos:
+            _max_frames = int(os.environ.get("FPS_MAX_FRAMES", "32"))
             videos_tensors = [
-                _load_frames_as_tensor(v) if _is_frame_list(v) else v
+                _load_frames_as_tensor(v) if _is_frame_list(v)
+                else _decode_video_to_tensor(v, _max_frames) if _is_video_path(v)
+                else v
                 for v in inputs.videos
             ]
             # Video processor inherits resize() from Lfm2VlImageProcessor;

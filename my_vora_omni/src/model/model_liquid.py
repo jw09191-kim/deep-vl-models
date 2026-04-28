@@ -22,6 +22,7 @@ class Lfm2VJEPAModel(Lfm2VlForConditionalGeneration):
         # Native vision_tower and multi_modal_projector are kept in the module tree
         # so that HF weight loading doesn't fail on unexpected keys; they are not
         # called at runtime — VJEPA visual module is used instead.
+        # 1. 전달된 config 자체의 값
         self.model.visual = None
 
     def _validate_model_kwargs(self, model_kwargs):
@@ -115,18 +116,22 @@ class Lfm2VJEPAModel(Lfm2VlForConditionalGeneration):
         if inputs_embeds is None:
             inputs_embeds = self.model.get_input_embeddings()(input_ids)
 
-        # Compute VJEPA visual features and inject into image token placeholders
-        all_features = []
-        if pixel_values is not None and image_grid_thw is not None:
-            all_features.extend(self._get_vjepa_features(pixel_values, image_grid_thw))
-        if pixel_values_videos is not None and video_grid_thw is not None:
-            all_features.extend(self._get_vjepa_features(pixel_values_videos, video_grid_thw))
+        target_id = self.config.image_token_id # 396
+        has_placeholders = input_ids is not None and (input_ids == target_id).any()
 
-        if all_features:
+        all_features = []
+        if has_placeholders:
+            if pixel_values is not None and image_grid_thw is not None:
+                all_features.extend(self._get_vjepa_features(pixel_values, image_grid_thw))
+            
+            if pixel_values_videos is not None and video_grid_thw is not None:
+                all_features.extend(self._get_vjepa_features(pixel_values_videos, video_grid_thw))
+
+        if all_features and has_placeholders:
             image_features = torch.cat(all_features, dim=0).to(
                 inputs_embeds.device, inputs_embeds.dtype
             )
-            # Reuse Lfm2VlModel's placeholder mask (checks image_token_id count)
+            
             special_image_mask = self.model.get_placeholder_mask(
                 input_ids=input_ids,
                 inputs_embeds=inputs_embeds,
@@ -134,7 +139,6 @@ class Lfm2VJEPAModel(Lfm2VlForConditionalGeneration):
             )
             inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
 
-        # Bypass Lfm2VlModel.forward's native vision path; call language model directly
         lm_outputs = self.model.language_model(
             attention_mask=attention_mask,
             position_ids=position_ids,

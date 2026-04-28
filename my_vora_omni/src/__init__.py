@@ -9,6 +9,11 @@ from .model import (
     Gemma4VJEPA21BModel,
     Gemma4VJEPA21LModel,
     Gemma4VJEPA21GModel,
+    Lfm2VJEPALModel,
+    Lfm2VJEPAGModel,
+    Lfm2VJEPA21BModel,
+    Lfm2VJEPA21LModel,
+    Lfm2VJEPA21GModel  
 )
 from .processor import (
     Qwen3VLVJepa2LProcessor,
@@ -25,6 +30,13 @@ from .processor import (
     Gemma4VJEPA21GProcessor,
     Gemma4VJEPAImageProcessor,
     Gemma4VJEPAVideoProcessor,
+    Lfm2VLVJepa2LProcessor,
+    Lfm2VLVJepa2GProcessor,
+    Lfm2VLVJEPA21BProcessor,
+    Lfm2VLVJEPA21LProcessor,
+    Lfm2VLVJEPA21GProcessor,
+    Lfm2VJEPAImageProcessor,
+    Lfm2VJEPAVideoProcessor   
 )
 from .template import Qwen3_5VJEPATemplate
 
@@ -56,6 +68,18 @@ __all__ = [
     "Gemma4VJEPA21GProcessor",
     "Gemma4VJEPAImageProcessor",
     "Gemma4VJEPAVideoProcessor",
+    "Lfm2VJEPALModel",
+    "Lfm2VJEPAGModel",
+    "Lfm2VJEPA21BModel",
+    "Lfm2VJEPA21LModel",
+    "Lfm2VJEPA21GModel",
+    "Lfm2VLVJepa2LProcessor",
+    "Lfm2VLVJepa2GProcessor",
+    "Lfm2VLVJEPA21BProcessor",
+    "Lfm2VLVJEPA21LProcessor",
+    "Lfm2VLVJEPA21GProcessor",
+    "Lfm2VJEPAImageProcessor",
+    "Lfm2VJEPAVideoProcessor"
 ]
 
 from transformers import AutoImageProcessor, AutoVideoProcessor
@@ -77,5 +101,15 @@ AutoImageProcessor.register(
 AutoVideoProcessor.register(
     "Gemma4VJEPAVideoProcessor",
     video_processor_class=Gemma4VJEPAVideoProcessor,
+    exist_ok=True,
+)
+AutoImageProcessor.register(
+    "Lfm2VJEPAImageProcessor",
+    fast_image_processor_class=Lfm2VJEPAImageProcessor,
+    exist_ok=True,
+)
+AutoVideoProcessor.register(
+    "Lfm2VJEPAVideoProcessor",
+    video_processor_class=Lfm2VJEPAVideoProcessor,
     exist_ok=True,
 )

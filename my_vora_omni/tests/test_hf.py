@@ -8,7 +8,7 @@ import re
 import argparse
 
 import torch
-from my_vora_omni.src.model.model import (
+from my_vora_omni.src.model import (
     Qwen3_5VJEPALModel,
     Qwen3_5VJEPAGModel,
     Qwen3_5VJEPA21BModel,
@@ -19,8 +19,13 @@ from my_vora_omni.src.model.model import (
     Gemma4VJEPA21BModel,
     Gemma4VJEPA21LModel,
     Gemma4VJEPA21GModel,
+    Lfm2VJEPALModel, 
+    Lfm2VJEPAGModel,
+    Lfm2VJEPA21BModel,
+    Lfm2VJEPA21LModel,
+    Lfm2VJEPA21GModel  
 )
-from my_vora_omni.src.processor.processor import (
+from my_vora_omni.src.processor import (
     Qwen3VLVJepa2LProcessor,
     Qwen3VLVJepa2GProcessor,
     Qwen3VLVJepa21BProcessor,
@@ -31,6 +36,11 @@ from my_vora_omni.src.processor.processor import (
     Gemma4VJEPA21BProcessor,
     Gemma4VJEPA21LProcessor,
     Gemma4VJEPA21GProcessor,
+    Lfm2VLVJepa2LProcessor, 
+    Lfm2VLVJepa2GProcessor,
+    Lfm2VLVJEPA21BProcessor,
+    Lfm2VLVJEPA21LProcessor,
+    Lfm2VLVJEPA21GProcessor
 )
 
 
@@ -51,6 +61,15 @@ def load_model(model_id: str, encoder: str = "vitl", device: str = "cuda"):
             "vjepa21l": (Gemma4VJEPA21LModel, Gemma4VJEPA21LProcessor),
             "vjepa21g": (Gemma4VJEPA21GModel, Gemma4VJEPA21GProcessor),
         }
+    else:
+        MODEL_MAP = {
+            "vitl": (Lfm2VJEPALModel, Lfm2VLVJepa2LProcessor),
+            "vitg": (Lfm2VJEPAGModel, Lfm2VLVJepa2GProcessor),
+            "vjepa21b": (Lfm2VJEPA21BModel, Lfm2VLVJEPA21BProcessor),
+            "vjepa21l": (Lfm2VJEPA21LModel, Lfm2VLVJEPA21LProcessor),
+            "vjepa21g": (Lfm2VJEPA21GModel, Lfm2VLVJEPA21GProcessor),
+        }
+        
 
     if encoder not in MODEL_MAP:
         raise ValueError
@@ -85,7 +104,7 @@ def generate(model, processor, messages, max_new_tokens=256):
     for msg in messages:
         if isinstance(msg["content"], str):
             msg["content"] = [{"type": "text", "text": msg["content"]}]
-
+    
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,

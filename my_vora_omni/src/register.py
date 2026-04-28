@@ -25,17 +25,17 @@ from my_vora_omni.src.processor import (
     Gemma4VJEPA21BProcessor,
     Gemma4VJEPA21LProcessor,
     Gemma4VJEPA21GProcessor,
+    Lfm2VLVJepa2LProcessor,
+    Lfm2VLVJepa2GProcessor,
+    Lfm2VLVJEPA21BProcessor,
+    Lfm2VLVJEPA21LProcessor,
+    Lfm2VLVJEPA21GProcessor,
     Qwen3VJEPAImageProcessor,
     Qwen3VJEPAVideoProcessor,
     Gemma4VJEPAImageProcessor,
     Gemma4VJEPAVideoProcessor,
     Lfm2VJEPAImageProcessor,
     Lfm2VJEPAVideoProcessor,
-    Lfm2VLVJepa2LProcessor,
-    Lfm2VLVJepa2GProcessor,
-    Lfm2VLVJEPA21BProcessor,
-    Lfm2VLVJEPA21LProcessor,
-    Lfm2VLVJEPA21GProcessor,
 )
 
 from my_vora_omni.src.model import (
@@ -407,6 +407,7 @@ register_template(
         chat_sep=["<|im_end|>\n"],
         suffix=["<|im_end|>"],
         default_system="You are a helpful assistant.",
+        # is_multimodal=True,
     )
 )
 

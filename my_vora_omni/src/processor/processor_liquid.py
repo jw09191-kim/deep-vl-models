@@ -1,9 +1,19 @@
 import os
-
+import torch
 from transformers import Lfm2VlImageProcessor, Lfm2VlProcessor
 from transformers.image_processing_utils import BatchFeature
 
 from .processor_base import VoRAVisionConfig, VJEPAImageMixin, VJEPAVideoMixin
+
+def _decode_video_to_tensor(path: str, max_frames: int = 32) -> torch.Tensor:
+    import decord
+    decord.bridge.set_bridge('torch')
+    vr = decord.VideoReader(path, ctx=decord.cpu(0))
+    total = len(vr)
+    indices = torch.linspace(0, total - 1, min(max_frames, total)).long().tolist()
+    frames = vr.get_batch(indices)  # (T, H, W, C) uint8
+    return frames.permute(0, 3, 1, 2).contiguous()  # (T, C, H, W)
+
 
 
 class Lfm2VJEPAImageProcessor(VJEPAImageMixin, Lfm2VlImageProcessor):
@@ -58,49 +68,56 @@ class Lfm2VLVJEPAProcessor(Lfm2VlProcessor):
     VISION_MODEL_ID = None
 
     def __call__(self, images=None, videos=None, text=None, **kwargs):
-        """
-        Override Lfm2VlProcessor.__call__ to bypass LFM2's native text-expansion logic
-        (which expects image_rows/cols/sizes not produced by VJEPA preprocessing).
-        The VoRA template handles visual token injection instead.
-        """
         inputs = {}
-
-        if images is not None:
-            if not isinstance(images, list):
-                images = [images]
-            flat_images = (
-                images
-                if not isinstance(images[0], list)
-                else [img for batch in images for img in batch]
-            )
-            vision_inputs = self.image_processor._vjepa_preprocess_images(
-                flat_images, **kwargs
-            )
-            inputs.update(vision_inputs.data)
+        all_soft_tokens = []
 
         if videos is not None:
-            if not isinstance(videos, list):
-                videos = [videos]
-            vision_inputs = self.video_processor._vjepa_preprocess_videos(
-                videos, **kwargs
-            )
+            if not isinstance(videos, list): videos = [videos]
+            
+            max_frames = int(os.environ.get("FPS_MAX_FRAMES", "32"))
+            
+            decoded_videos = []
+            for v in videos:
+                actual_v = v[0] if isinstance(v, list) and len(v) > 0 and isinstance(v[0], str) else v
+                
+                if isinstance(actual_v, str):
+                    decoded_videos.append(_decode_video_to_tensor(actual_v, max_frames))
+                else:
+                    decoded_videos.append(actual_v)
+            
+            vision_inputs = self.video_processor._vjepa_preprocess_videos(decoded_videos, **kwargs)
             inputs.update(vision_inputs.data)
+            soft = vision_inputs['num_soft_tokens_per_video']
+            all_soft_tokens.extend(soft.tolist() if isinstance(soft, torch.Tensor) else soft)
 
         if text is not None:
-            if isinstance(text, str):
-                text = [text]
-            text_inputs = self.tokenizer(text, add_special_tokens=False)
-            inputs.update(text_inputs)
+            if isinstance(text, str): text = [text]
+            image_token_id = 396 # LFM2-VL 표준 ID
+            
+            expanded_input_ids = []
+            for prompt in text:
+                if "<image>" not in prompt:
+                    prompt = "<image>" * len(all_soft_tokens) + prompt
+                
+                parts = prompt.split("<image>")
+                final_ids = []
+                for i, part in enumerate(parts):
+                    final_ids.extend(self.tokenizer.encode(part, add_special_tokens=False))
+                    if i < len(parts) - 1 and i < len(all_soft_tokens):
+                        final_ids.extend([image_token_id] * int(all_soft_tokens[i]))
+                expanded_input_ids.append(final_ids)
 
-        return_tensors = kwargs.get("return_tensors", None)
-        return BatchFeature(inputs, tensor_type=return_tensors)
+            inputs["input_ids"] = torch.tensor(expanded_input_ids)
+            inputs["attention_mask"] = torch.ones_like(inputs["input_ids"])
+
+        from transformers import BatchFeature
+        return BatchFeature(inputs, tensor_type=kwargs.get("return_tensors", "pt"))
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, *args, **kwargs):
         processor = super().from_pretrained(
             pretrained_model_name_or_path, *args, **kwargs
         )
-
         processor.image_processor = Lfm2VJEPAImageProcessor(
             vision_model_id=cls.VISION_MODEL_ID
         )
