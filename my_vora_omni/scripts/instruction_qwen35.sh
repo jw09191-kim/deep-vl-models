@@ -50,16 +50,8 @@ swift sft \
     --model "$STAGE1_MODEL" \
     --model_type "$MODEL_TYPE" \
     --external_plugins 'my_vora_omni/src/register.py' \
-    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#150000' \
-              './datasets/LLaVA-Video-178K/sources/youtube_video_2024.jsonl#50000' \
-              './datasets/LLaVA-Video-178K/sources/Charades.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/activitynet.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/hdvila.jsonl#20000' \
-              './datasets/LLaVA-Video-178K/sources/ego4d.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/train_val.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/train.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/videos.jsonl' \
-              './datasets/LLaVA-Video-178K/sources/others.jsonl#20000' \
+    --dataset ./datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#50000 \
+              ./datasets/LLaVA-Video-178K/annotations_new/*.json \
     --tuner_type lora \
     --lora_rank 64 \
     --lora_alpha 128 \
@@ -77,7 +69,7 @@ swift sft \
     --modules_to_save "model.visual.merger" \
     --gradient_accumulation_steps 4 \
     --eval_steps 1000 \
-    --save_steps 1000 \
+    --save_steps 1 \
     --save_total_limit 3 \
     --save_strategy "steps" \
     --logging_steps 10 \
@@ -86,6 +78,7 @@ swift sft \
     --warmup_ratio 0.03 \
     --dataloader_num_workers 8 \
     --dataset_num_proc 16 \
+    --ddp_find_unused_parameters true \
     --gradient_checkpointing true \
     --lazy_tokenize true \
-    --ddp_find_unused_parameters true \
+    --truncation_strategy "delete" \

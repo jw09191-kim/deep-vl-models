@@ -54,11 +54,14 @@ swift sft \
     --model "$MODEL_ID" \
     --model_type "$MODEL_TYPE" \
     --external_plugins 'my_vora_omni/src/register.py' \
-    --dataset './datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#50000' \
-              './datasets/LLaVA-Video-178K/sources/ego4d.jsonl#10000' \
+    --dataset ./datasets/LLaVA-OneVision-Data/llava_onevision.jsonl#50000 \
+              ./datasets/LLaVA-Video-178K/annotations_new/0_30_s_academic_mc_v0_1_qa_processed.json \
+              ./datasets/LLaVA-Video-178K/annotations_new/1_2_m_academic_mc_v0_1_qa_processed.json \
+              ./datasets/LLaVA-Video-178K/annotations_new/2_3_m_academic_mc_v0_1_qa_processed.json \
+              ./datasets/LLaVA-Video-178K/annotations_new/30_60_s_academic_mc_v0_1_qa_processed.json \
     --tuner_type full \
     --torch_dtype bfloat16 \
-    --attn_impl "flash_attn" \
+    --attn_impl "sdpa" \
     --padding_free false \
     --num_train_epochs 1 \
     --per_device_train_batch_size 4 \
@@ -70,10 +73,10 @@ swift sft \
     --freeze_aligner false \
     --modules_to_save "model.visual.merger" \
     --gradient_accumulation_steps 4 \
-    --eval_steps 500 \
-    --save_steps 500 \
-    --save_total_limit 1 \
-    --save_strategy "steps" \
+    --eval_steps 1000 \
+    --save_steps 1 \
+    --save_total_limit 3 \
+    --save_strategy "epoch" \
     --logging_steps 10 \
     --max_length 5120 \
     --output_dir "$OUTPUT_DIR" \
@@ -82,6 +85,7 @@ swift sft \
     --dataset_num_proc 16 \
     --ddp_find_unused_parameters true \
     --gradient_checkpointing true \
-    --lazy_tokenize true
+    --lazy_tokenize true \
+    --truncation_strategy "delete" \
 
 
